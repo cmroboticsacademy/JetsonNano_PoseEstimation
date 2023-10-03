@@ -22,12 +22,18 @@
 
 #include "gstBufferManager.h"
 #include "cudaColorspace.h"
+#include "timespec.h"
 #include "logging.h"
 
 
-#ifndef DISABLE_NVMM
+#ifdef ENABLE_NVMM
 #include <nvbuf_utils.h>
 #include <cuda_egl_interop.h>
+#include <NvInfer.h>
+
+#if NV_TENSORRT_MAJOR > 8 || (NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR >= 4)
+#include <nvbufsurface.h>   // JetPack 5
+#endif
 #endif
 
 
@@ -37,13 +43,14 @@ gstBufferManager::gstBufferManager( videoOptions* options )
 	mOptions    = options;
 	mFormatYUV  = IMAGE_UNKNOWN;
 	mFrameCount = 0;
+	mLastTimestamp = 0;
+	mNvmmUsed   = false;
 	
-#ifndef DISABLE_NVMM
+#ifdef ENABLE_NVMM
 	mNvmmFD        = -1;
 	mNvmmEGL       = NULL;
 	mNvmmCUDA      = NULL;
 	mNvmmSize      = 0;
-	mNvmmEnabled   = false;
 	mNvmmReleaseFD = false;
 #endif
 	
@@ -63,6 +70,8 @@ bool gstBufferManager::Enqueue( GstBuffer* gstBuffer, GstCaps* gstCaps )
 {
 	if( !gstBuffer || !gstCaps )
 		return false;
+
+	uint64_t timestamp = apptime_nano();
 
 #if GST_CHECK_VERSION(1,0,0)	
 	// map the buffer memory for read access
@@ -142,26 +151,31 @@ bool gstBufferManager::Enqueue( GstBuffer* gstBuffer, GstCaps* gstCaps )
 		LogVerbose(LOG_GSTREAMER "gstBufferManager -- recieved first frame, codec=%s format=%s width=%u height=%u size=%zu\n", videoOptions::CodecToStr(mOptions->codec), imageFormatToStr(mFormatYUV), mOptions->width, mOptions->height, gstSize);
 	}
 
-	LogDebug(LOG_GSTREAMER "gstBufferManager -- recieved %ix%i frame (%zu bytes)\n", width, height, gstSize);
+	//LogDebug(LOG_GSTREAMER "gstBufferManager -- recieved %ix%i frame (%zu bytes)\n", width, height, gstSize);
 		
-#ifndef DISABLE_NVMM
+#ifdef ENABLE_NVMM
 	// check for NVMM buffer	
 	GstCapsFeatures* gstCapsFeatures = gst_caps_get_features(gstCaps, 0);
 	
 	if( gst_caps_features_contains(gstCapsFeatures, GST_CAPS_FEATURE_MEMORY_NVMM))
 	{
-		mNvmmEnabled = true;
+		mNvmmUsed = true;
 		int nvmmFD = -1;
 		
 		if( mFrameCount == 0 )
 			LogVerbose(LOG_GSTREAMER "gstBufferManager -- recieved NVMM memory\n");
 	
+	#if NV_TENSORRT_MAJOR > 8 || (NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR >= 4)
+		NvBufSurface* surf = (NvBufSurface*)map.data;
+		nvmmFD = surf->surfaceList[0].bufferDesc;
+	#else
 		if( ExtractFdFromNvBuffer(map.data, &nvmmFD) != 0 )
 		{
 			LogError(LOG_GSTREAMER "gstBufferManager -- failed to get FD from NVMM memory\n");
 			return false;
 		}
-
+	#endif
+	
 		NvBufferParams nvmmParams;
 	
 		if( NvBufferGetParams(nvmmFD, &nvmmParams) != 0 )
@@ -216,32 +230,59 @@ bool gstBufferManager::Enqueue( GstBuffer* gstBuffer, GstCaps* gstCaps )
 	}
 	else
 	{
-		mNvmmEnabled = false;
+		mNvmmUsed = false;
 	}
 #endif
 
 	// handle CPU path (non-NVMM)
-	if( !mNvmmEnabled )
+	if( !mNvmmUsed )
 	{
-		// allocate ringbuffer
+		// allocate image ringbuffer
 		if( !mBufferYUV.Alloc(mOptions->numBuffers, gstSize, RingBuffer::ZeroCopy) )
 		{
-			LogError(LOG_GSTREAMER "gstBufferManager -- failed to allocate %u buffers (%zu bytes each)\n", mOptions->numBuffers, gstSize);
+			LogError(LOG_GSTREAMER "gstBufferManager -- failed to allocate %u image buffers (%zu bytes each)\n", mOptions->numBuffers, gstSize);
 			return false;
 		}
 
-		// copy to next ringbuffer
+		// copy to next image ringbuffer
 		void* nextBuffer = mBufferYUV.Peek(RingBuffer::Write);
 
 		if( !nextBuffer )
 		{
-			LogError(LOG_GSTREAMER "gstBufferManager -- failed to retrieve next ringbuffer for writing\n");
+			LogError(LOG_GSTREAMER "gstBufferManager -- failed to retrieve next image ringbuffer for writing\n");
 			return false;
 		}
 
 		memcpy(nextBuffer, gstData, gstSize);
 		mBufferYUV.Next(RingBuffer::Write);
 	}
+
+		// handle timestamps in either case (CPU or NVMM path)
+		size_t timestamp_size = sizeof(uint64_t);
+
+		// allocate timestamp ringbuffer (GPU only if not ZeroCopy)
+		if( !mTimestamps.Alloc(mOptions->numBuffers, timestamp_size, RingBuffer::ZeroCopy) )
+		{
+			LogError(LOG_GSTREAMER "gstBufferManager -- failed to allocate %u timestamp buffers (%zu bytes each)\n", mOptions->numBuffers, timestamp_size);
+			return false;
+		}
+
+		// copy to next timestamp ringbuffer
+		void* nextTimestamp = mTimestamps.Peek(RingBuffer::Write);
+
+		if( !nextTimestamp )
+		{
+			LogError(LOG_GSTREAMER "gstBufferManager -- failed to retrieve next timestamp ringbuffer for writing\n");
+			return false;
+		}
+
+		if (GST_BUFFER_DTS_IS_VALID(gstBuffer) || GST_BUFFER_PTS_IS_VALID(gstBuffer))
+		{
+			timestamp = GST_BUFFER_DTS_OR_PTS(gstBuffer);
+		}
+
+		memcpy(nextTimestamp, (void*)&timestamp, timestamp_size);
+		mTimestamps.Next(RingBuffer::Write);
 
 	mWaitEvent.Wake();
 	mFrameCount++;
@@ -255,16 +296,16 @@ bool gstBufferManager::Enqueue( GstBuffer* gstBuffer, GstCaps* gstCaps )
 
 
 // Dequeue
-bool gstBufferManager::Dequeue( void** output, imageFormat format, uint64_t timeout )
+int gstBufferManager::Dequeue( void** output, imageFormat format, uint64_t timeout )
 {
 	// wait until a new frame is recieved
 	if( !mWaitEvent.Wait(timeout) )
-		return false;
+		return 0;
 
 	void* latestYUV = NULL;
 	
-#ifndef DISABLE_NVMM
-	if( mNvmmEnabled )
+#ifdef ENABLE_NVMM
+	if( mNvmmUsed )
 	{
 		mNvmmMutex.Lock();
 		
@@ -279,17 +320,17 @@ bool gstBufferManager::Dequeue( void** output, imageFormat format, uint64_t time
 		mNvmmMutex.Unlock();
 		
 		if( !eglImage )
-			return NULL;
+			return -1;
 		
 		// map EGLImage into CUDA array
 		cudaGraphicsResource* eglResource = NULL;
 		cudaEglFrame eglFrame;
 		
 		if( CUDA_FAILED(cudaGraphicsEGLRegisterImage(&eglResource, eglImage, cudaGraphicsRegisterFlagsReadOnly)) )
-			return false;
+			return -1;
 		
 		if( CUDA_FAILED(cudaGraphicsResourceGetMappedEglFrame(&eglFrame, eglResource, 0, 0)) )
-			return false;
+			return -1;
 
 		if( eglFrame.planeCount != 2 )
 			LogWarning(LOG_GSTREAMER "gstBufferManager -- unexpected number of planes in NVMM buffer (%u vs 2 expected)\n", eglFrame.planeCount);
@@ -297,13 +338,13 @@ bool gstBufferManager::Dequeue( void** output, imageFormat format, uint64_t time
 		if( eglFrame.planeDesc[0].width != mOptions->width || eglFrame.planeDesc[0].height != mOptions->height )
 		{
 			LogError(LOG_GSTREAMER "gstBufferManager -- NVMM EGLImage dimensions mismatch (%ux%u when expected %ux%u)", eglFrame.planeDesc[0].width, eglFrame.planeDesc[0].height, mOptions->width, mOptions->height);
-			return false;
+			return -1;
 		}
 		
 		if( eglFrame.frameType != cudaEglFrameTypeArray )  // cudaEglFrameTypePitch
 		{
 			LogError(LOG_GSTREAMER "gstBufferManager -- NVMM had unexpected frame type (was pitched pointer, expected CUDA array)\n");
-			return false;
+			return -1;
 		}
 		
 		// NV12 buffers have multiple planes (Y @ full res and UV @ half res)
@@ -337,7 +378,7 @@ bool gstBufferManager::Dequeue( void** output, imageFormat format, uint64_t time
 			CUDA_FREE(mNvmmCUDA);
 			
 			if( CUDA_FAILED(cudaMalloc(&mNvmmCUDA, sizeYUV)) )
-				return false;
+				return -1;
 		}
 		
 		// copy arrays into linear memory (so our CUDA kernels can use it)
@@ -346,7 +387,7 @@ bool gstBufferManager::Dequeue( void** output, imageFormat format, uint64_t time
 		for( uint32_t n=0; n < eglFrame.planeCount && n < maxPlanes; n++ )
 		{
 			if( CUDA_FAILED(cudaMemcpy2DFromArrayAsync(((uint8_t*)mNvmmCUDA) + planeOffset, planePitch[n], eglFrame.frame.pArray[n], 0, 0, planePitch[n], eglFrame.planeDesc[n].height, cudaMemcpyDeviceToDevice)) )
-				return false;
+				return -1;
 		
 			planeOffset += planeSize[n];
 		}
@@ -362,11 +403,32 @@ bool gstBufferManager::Dequeue( void** output, imageFormat format, uint64_t time
 #endif
 
 	// handle the CPU path (non-NVMM)
-	if( !mNvmmEnabled )
+	if( !mNvmmUsed )
 		latestYUV = mBufferYUV.Next(RingBuffer::ReadLatestOnce);
 
 	if( !latestYUV )
-		return false;
+		return -1;
+
+	// handle timestamp (both paths)
+	void* pLastTimestamp = NULL;
+	pLastTimestamp = mTimestamps.Next(RingBuffer::ReadLatestOnce);
+
+	if( !pLastTimestamp )
+	{
+		LogWarning(LOG_GSTREAMER "gstBufferManager -- failed to retrieve timestamp buffer (default to 0)\n");
+		mLastTimestamp = 0;
+	}
+	else
+	{
+		mLastTimestamp = *((uint64_t*)pLastTimestamp);
+	}
+
+	// output raw image if conversion format is unknown
+	if ( format == IMAGE_UNKNOWN )
+	{
+		*output = latestYUV;
+		return 1;
+	}
 
 	// allocate ringbuffer for colorspace conversion
 	const size_t rgbBufferSize = imageFormatSize(format, mOptions->width, mOptions->height);
@@ -374,7 +436,7 @@ bool gstBufferManager::Dequeue( void** output, imageFormat format, uint64_t time
 	if( !mBufferRGB.Alloc(mOptions->numBuffers, rgbBufferSize, mOptions->zeroCopy ? RingBuffer::ZeroCopy : 0) )
 	{
 		LogError(LOG_GSTREAMER "gstBufferManager -- failed to allocate %u buffers (%zu bytes each)\n", mOptions->numBuffers, rgbBufferSize);
-		return false;
+		return -1;
 	}
 
 	// perform colorspace conversion
@@ -389,10 +451,10 @@ bool gstBufferManager::Dequeue( void** output, imageFormat format, uint64_t time
 		LogError(LOG_GSTREAMER "                       * rgb32f\n");		
 		LogError(LOG_GSTREAMER "                       * rgba32f\n");
 
-		return false;
+		return -1;
 	}
 
 	*output = nextRGB;
-	return true;
+	return 1;
 }
 

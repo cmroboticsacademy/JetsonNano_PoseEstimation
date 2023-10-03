@@ -11,8 +11,14 @@ project(my-recognition)
 find_package(jetson-utils)
 find_package(jetson-inference)
 
+# find VPI package (optional)
+find_package(VPI 2.0)
+
 # CUDA is required
 find_package(CUDA)
+
+# add directory for libnvbuf-utils to program
+link_directories(/usr/lib/aarch64-linux-gnu/tegra)
 
 # compile the my-recognition program
 cuda_add_executable(my-recognition my-recognition.cpp)

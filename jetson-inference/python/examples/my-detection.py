@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 #
 # Copyright (c) 2019, NVIDIA CORPORATION. All rights reserved.
 #
@@ -21,15 +21,20 @@
 # DEALINGS IN THE SOFTWARE.
 #
 
-import jetson.inference
-import jetson.utils
+from jetson_inference import detectNet
+from jetson_utils import videoSource, videoOutput
 
-net = jetson.inference.detectNet("ssd-mobilenet-v2", threshold=0.5)
-camera = jetson.utils.videoSource("csi://0")      # '/dev/video0' for V4L2
-display = jetson.utils.videoOutput("display://0") # 'my_video.mp4' for file
+net = detectNet("ssd-mobilenet-v2", threshold=0.5)
+camera = videoSource("csi://0")      # '/dev/video0' for V4L2
+display = videoOutput("display://0") # 'my_video.mp4' for file
 
 while display.IsStreaming():
-	img = camera.Capture()
-	detections = net.Detect(img)
-	display.Render(img)
-	display.SetStatus("Object Detection | Network {:.0f} FPS".format(net.GetNetworkFPS()))
+    img = camera.Capture()
+
+    if img is None: # capture timeout
+        continue
+
+    detections = net.Detect(img)
+    
+    display.Render(img)
+    display.SetStatus("Object Detection | Network {:.0f} FPS".format(net.GetNetworkFPS()))

@@ -24,7 +24,10 @@
 #define __GSTREAMER_UTILITY_H__
 
 #include <gst/gst.h>
+#include <sstream>
+
 #include "videoOptions.h"
+#include "NvInfer.h"
 
 
 /**
@@ -76,5 +79,33 @@ const char* gst_codec_to_string( videoOptions::Codec codec );
  */
 const char* gst_format_to_string( imageFormat format );
 
-#endif
+/**
+ * gst_build_filesink
+ * @internal
+ * @ingroup codec
+ */
+bool gst_build_filesink( const URI& uri, videoOptions::Codec codec, std::ostringstream& pipeline );
 
+/**
+ * gst_select_decoder
+ * @internal
+ * @ingroup codec
+ */
+const char* gst_select_decoder( videoOptions::Codec codec, videoOptions::CodecType& type );
+
+/**
+ * gst_select_decoder
+ * @internal
+ * @ingroup codec
+ */
+const char* gst_select_encoder( videoOptions::Codec codec, videoOptions::CodecType& type );
+
+/**
+ * gst_default_codec
+ * @internal
+ * @ingroup codec
+ */
+videoOptions::CodecType gst_default_codec();
+
+
+#endif

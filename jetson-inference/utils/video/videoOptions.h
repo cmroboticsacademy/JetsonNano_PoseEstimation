@@ -49,6 +49,14 @@ public:
 	URI resource;
 
 	/**
+	 * Optional path to save the compressed stream to a video file on disk,
+	 * which is to be used in addition to the primary resource URI above.
+	 * This option can be set from the command-line using `--input-save`
+	 * for videoSource streams, or `--output-save` for videoOutput streams.
+	 */
+	URI save;
+	
+	/**
 	 * The width of the stream (in pixels).
 	 * This option can be set from the command line using `--input-width=N`
 	 * for videoSource streams, or `--output-width=N` for videoOutput streams.
@@ -68,6 +76,11 @@ public:
 	 * for input and output streams, respectively. The `--framerate=N` option sets it for both.
 	 */
 	float frameRate;
+	
+	/**
+	 * The number of frames that have been captured or output on this interface.
+	 */
+	uint64_t frameCount;
 	
 	/**
 	 * The encoding bitrate for compressed streams (only applies to video codecs like H264/H265).
@@ -106,10 +119,12 @@ public:
 	int loop;
 
 	/**
-	 * Number of milliseconds of video to buffer for incoming RTSP streams (the default is 2000 ms).
-	 * This option can be set from the command line using `--input-rtsp-latency=N`
+	 * Number of milliseconds of video to buffer for network RTSP or WebRTC streams.
+	 * The default setting is 10ms (which is lower than GStreamer's default settings).
+	 * If you have connection/buffering problems, try increasing the latency setting.
+	 * It can be set from the command line using `--input-latency=N` or `--output-latency=N`
 	 */
-	int rtspLatency;
+	int latency;
 
 	/**
 	 * Device interface types.
@@ -178,7 +193,7 @@ public:
 	FlipMethod flipMethod;
 
 	/**
-	 * Video codec types.
+	 * Video codecs.
 	 */
 	enum Codec
 	{
@@ -205,7 +220,53 @@ public:
 	 * the `--output-codec=xyz` command line option (same values for `xyz` as above).
 	 */
 	Codec codec;
+	
+	/**
+	 * Video codec engines.
+	 */
+	enum CodecType
+	{
+		CODEC_CPU = 0,	 /**< CPU-based implementation using libav (e.g. avdec_h264 / x264enc) */
+		CODEC_OMX,	 /**< aarch64 & JetPack 4 only - OMX hardware plugins (e.g. omxh264dec/omxh264enc) */
+		CODEC_V4L2,	 /**< aarch64 & JetPack 5 only - V4L2 hardware plugins (e.g. nvv4l2decoder/nvv4l2h264enc) */
+		CODEC_NVENC,	 /**< x86 only - NVENC hardware plugin (not currently implemented) */
+		CODEC_NVDEC	 /**< x86 only - NVDEC hardware plugin (not currently implemented) */
+	};
+	
+	/**
+	 * Indicates the underlying hardware/software engine used by the codec.
+	 * For input streams, this can be set with `--decode=cpu` or `--decode=v4l2` for example.
+	 * For output streams, this can be set with `--encode=cpu` or `--encode=v4l2` for example.
+	 * The default setting is to use hardware-acceleration on Jetson (aarch64) and CPU on x86.
+	 */
+	CodecType codecType;
+		
 
+	/**
+	 * URL of STUN server used for WebRTC.  This can be set using the `--stun-server` command-line argument.
+	 * STUN servers are used during ICE/NAT and allow a local device to determine its public IP address.
+	 * If this is left blank and WebRTC is used, then a default STUN server will be assigned.
+	 */
+	std::string stunServer;
+	
+	/**
+	 * Path to a file containing a PEM-encoded SSL/TLS certificate.
+	 * This is used for enabling HTTPS in the WebRTC server.
+	 * It can be set from the command-line using the `--ssl-cert` or `--https-cert` options.
+	 * You can make your own self-signed certificate by running a command like:
+	 *   `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365`
+	 */
+	std::string sslCert;
+	
+	/**
+	 * Path to a file containing a PEM-encoded private key.
+	 * This is used for enabling HTTPS in the WebRTC server.
+	 * It can be set from the command-line using the `--ssl-key` or `--https-key` options.
+	 * You can make your own self-signed certificate by running a command like:
+	 *   `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365`
+	 */
+	std::string sslKey;
+	
 	/**
 	 * Log the video settings, with an optional prefix label.
 	 */
@@ -214,12 +275,12 @@ public:
 	/**
 	 * @internal Parse the video resource URI and options.
 	 */
-	bool Parse( const char* URI, const int argc, char** argv, IoType ioType, const char* extraFlag=NULL);
+	bool Parse( const char* URI, const int argc, char** argv, IoType ioType, int ioPositionArg=-1);
 
 	/**
 	 * @internal Parse the video resource URI and options.
 	 */
-	bool Parse( const char* URI, const commandLine& cmdLine, IoType ioType);
+	bool Parse( const char* URI, const commandLine& cmdLine, IoType ioType, int ioPositionArg=-1);
 
 	/**
 	 * @internal Parse the video resource URI and options.
@@ -270,6 +331,16 @@ public:
 	 * Parse a Codec enum from a string.
 	 */
 	static Codec CodecFromStr( const char* str );
+	
+	/**
+	 * Convert a CodecType enum to a string.
+	 */
+	static const char* CodecTypeToStr( CodecType codecType );
+
+	/**
+	 * Parse a Codec enum from a string.
+	 */
+	static CodecType CodecTypeFromStr( const char* str );
 };
 
 

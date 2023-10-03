@@ -34,23 +34,29 @@
  * @ingroup video
  */
 #define VIDEO_SOURCE_USAGE_STRING  "videoSource arguments: \n" 								\
-		  "    input_URI            resource URI of the input stream, for example:\n"			\
-		  "                             * /dev/video0              (V4L2 camera #0)\n"			\
-		  "                             * csi://0                  (MIPI CSI camera #0)\n"		\
-		  "                             * rtp://@:1234             (RTP stream)\n"				\
-		  "                             * rtsp://user:pass@ip:1234 (RTSP stream)\n"			\
-		  "                             * file://my_image.jpg      (image file)\n"				\
-		  "                             * file://my_video.mp4      (video file)\n"				\
-		  "                             * file://my_directory/     (directory of images)\n"		\
+		  "    input                resource URI of the input stream, for example:\n"			\
+		  "                             * /dev/video0               (V4L2 camera #0)\n"			\
+		  "                             * csi://0                   (MIPI CSI camera #0)\n"		\
+		  "                             * rtp://@:1234              (RTP stream)\n"			\
+		  "                             * rtsp://user:pass@ip:1234  (RTSP stream)\n"			\
+		  "                             * webrtc://@:1234/my_stream (WebRTC stream)\n"			\
+		  "                             * file://my_image.jpg       (image file)\n"			\
+		  "                             * file://my_video.mp4       (video file)\n"			\
+		  "                             * file://my_directory/      (directory of images)\n"		\
 		  "  --input-width=WIDTH    explicitly request a width of the stream (optional)\n"   	\
 		  "  --input-height=HEIGHT  explicitly request a height of the stream (optional)\n"  	\
 		  "  --input-rate=RATE      explicitly request a framerate of the stream (optional)\n"	\
+		  "  --input-save=FILE      path to video file for saving the input stream to disk\n"	\
 		  "  --input-codec=CODEC    RTP requires the codec to be set, one of these:\n"			\
 		  "                             * h264, h265\n"									\
 		  "                             * vp8, vp9\n"									\
 		  "                             * mpeg2, mpeg4\n"									\
 		  "                             * mjpeg\n"        								\
-		  "  --input-flip=FLIP      flip method to apply to input (excludes V4L2):\n" 			\
+		  "  --input-decoder=TYPE   the decoder engine to use, one of these:\n"                   \
+		  "                             * cpu\n"                                                  \
+		  "                             * omx  (aarch64/JetPack4 only)\n"                         \
+		  "                             * v4l2 (aarch64/JetPack5 only)\n"                         \
+		  "  --input-flip=FLIP      flip method to apply to input:\n" 						\
 		  "                             * none (default)\n" 								\
 		  "                             * counterclockwise\n" 								\
 		  "                             * rotate-180\n" 									\
@@ -113,36 +119,26 @@ class videoSource
 {
 public:
 	/**
+	 * Stream status codes that are optionally returned from Capture()
+	 */
+	enum Status
+	{
+		ERROR   = -2,	/**< an error occurred */
+		EOS     = -1,	/**< end-of-stream (EOS) */
+		TIMEOUT = 0,	/**< a timeout occurred */
+		OK      = 1	/**< frame capture successful */
+	};
+	
+	/**
 	 * Create videoSource interface from a videoOptions struct that's already been filled out.
 	 * It's expected that the supplied videoOptions already contain a valid resource URI.
 	 */
 	static videoSource* Create( const videoOptions& options );
 
 	/**
-	 * Create videoSource interface from a resource URI string and optional videoOptions.
-	 * @see the documentation above and the URI struct for more info about resource URI's.
-	 */
-	static videoSource* Create( const char* URI, const videoOptions& options=videoOptions() );
-
-	/**
-	 * Create videoSource interface from a resource URI string and parsing command line arguments.
-	 * @see videoOptions for valid command-line arguments to be parsed.
-	 * @see the documentation above and the URI struct for more info about resource URI's.
-	 */
-	static videoSource* Create( const char* URI, const commandLine& cmdLine );
-	
-	/**
-	 * Create videoSource interface from a resource URI string and parsing command line arguments.
-	 * @see videoOptions for valid command-line arguments to be parsed.
-	 * @see the documentation above and the URI struct for more info about resource URI's.
-	 */
-	static videoSource* Create( const char* URI, const int argc, char** argv );
-
-	/**
 	 * Create videoSource interface by parsing command line arguments, including the resource URI.
 	 * @param positionArg indicates the positional argument number in the command line of
-	 *                    the resource URI (or `-1` if a positional argument isn't used,
-	 *                    and should instead be parsed from the `--input=` option). 
+	 *                    the resource URI (or `-1` if a positional argument isn't used). 
 	 * @see videoOptions for valid command-line arguments to be parsed.
 	 * @see the documentation above and the URI struct for more info about resource URI's.
 	 */
@@ -151,13 +147,36 @@ public:
 	/**
 	 * Create videoSource interface by parsing command line arguments, including the resource URI.
 	 * @param positionArg indicates the positional argument number in the command line of
-	 *                    the resource URI (or `-1` if a positional argument isn't used,
-	 *                    and should instead be parsed from the `--input=` option). 
+	 *                    the resource URI (or `-1` if a positional argument isn't used). 
 	 * @see videoOptions for valid command-line arguments to be parsed.
 	 * @see the documentation above and the URI struct for more info about resource URI's.
 	 */
 	static videoSource* Create( const commandLine& cmdLine, int positionArg=-1 );
 	
+	/**
+	 * Create videoSource interface from a resource URI string and optional videoOptions.
+	 * @see the documentation above and the URI struct for more info about resource URI's.
+	 */
+	static videoSource* Create( const char* URI, const videoOptions& options=videoOptions() );
+
+	/**
+	 * Create videoSource interface from a resource URI string and parsing command line arguments.
+	 * @param positionArg indicates the positional argument number in the command line of
+	 *                    the resource URI (or `-1` if a positional argument isn't used). 
+	 * @see videoOptions for valid command-line arguments to be parsed.
+	 * @see the documentation above and the URI struct for more info about resource URI's.
+	 */
+	static videoSource* Create( const char* URI, const commandLine& cmdLine, int positionArg=-1, const videoOptions& options=videoOptions() );
+	
+	/**
+	 * Create videoSource interface from a resource URI string and parsing command line arguments.
+	 * @param positionArg indicates the positional argument number in the command line of
+	 *                    the resource URI (or `-1` if a positional argument isn't used). 
+	 * @see videoOptions for valid command-line arguments to be parsed.
+	 * @see the documentation above and the URI struct for more info about resource URI's.
+	 */
+	static videoSource* Create( const char* URI, const int argc, char** argv, int positionArg=-1, const videoOptions& options=videoOptions() );
+
 	/**
 	 * Destroy interface and release all resources.
 	 */
@@ -167,6 +186,31 @@ public:
 	 * Usage string for command line arguments to Create()
 	 */
 	static inline const char* Usage() 		{ return VIDEO_SOURCE_USAGE_STRING; }
+	
+	/**
+	 * Capture the next image from the video stream, using the default timeout of 1000ms.
+	 *
+	 * The image formats supported by this templated version of Capture() include the following:
+	 *
+	 *    - uchar3 (`IMAGE_RGB8`)
+	 *    - uchar4 (`IMAGE_RGBA8`)
+	 *    - float3 (`IMAGE_RGB32F`)
+	 *    - float4 (`IMAGE_RGBA32F`)
+	 *
+	 * The image format will automatically be deduced from these types.  If other types are used
+	 * with this overload, a static compile-time error will be asserted.
+	 *
+	 * @param[out] image output pointer that will be set to the memory containing the image.
+ 	 *                   If this interface has it's videoOptions::zeroCopy flag set to true,
+	 *                   the memory was allocated in mapped CPU/GPU memory and is be accessible
+	 *                   from both CPU and CUDA.  Otherwise, it's accessible only from CUDA.
+	 *
+	 * @param[out] status optional status code returned (@see videoSource::Status).
+	 *                    -2 on ERROR, -1 on EOS, 0 on TIMEOUT, 1 on OK.
+	 *
+	 * @returns `true` if a frame was captured, `false` if there was an error or a timeout occurred.
+	 */
+	template<typename T> bool Capture( T** image, int* status )										{ return Capture((void**)image, imageFormatFromType<T>(), DEFAULT_TIMEOUT, status); }
 	
 	/**
 	 * Capture the next image from the video stream.
@@ -187,12 +231,15 @@ public:
 	 *                   from both CPU and CUDA.  Otherwise, it's accessible only from CUDA.
 	 *
 	 * @param[in] timeout timeout in milliseconds to wait to capture the image before returning.
-	 *                    A timeout value of `UINT64_MAX` (the default) will wait forever, and
-	 *                    a timeout of 0 will return instantly if a frame wasn't immediately ready.
+	 *                    The default is 1000ms.  A timeout value of `UINT64_MAX` will wait forever.
+	 *                    A timeout of 0 will return instantly if a frame wasn't immediately ready.
+	 *
+	 * @param[out] status optional status code returned (@see videoSource::Status).
+	 *                    -2 on ERROR, -1 on EOS, 0 on TIMEOUT, 1 on OK.
 	 *
 	 * @returns `true` if a frame was captured, `false` if there was an error or a timeout occurred.
 	 */
-	template<typename T> bool Capture( T** image, uint64_t timeout=UINT64_MAX )		{ return Capture((void**)image, imageFormatFromType<T>(), timeout); }
+	template<typename T> bool Capture( T** image, uint64_t timeout=DEFAULT_TIMEOUT, int* status=NULL )		{ return Capture((void**)image, imageFormatFromType<T>(), timeout); }
 	
 	/**
 	 * Capture the next image from the video stream.
@@ -206,13 +253,16 @@ public:
 	 *                   from both CPU and CUDA.  Otherwise, it's accessible only from CUDA.
 	 *
 	 * @param[in] timeout timeout in milliseconds to wait to capture the image before returning.
-	 *                    A timeout value of `UINT64_MAX` (the default) will wait forever, and
-	 *                    a timeout of 0 will return instantly if a frame wasn't immediately ready.
+	 *                    The default is 1000ms.  A timeout value of `UINT64_MAX` will wait forever.
+	 *                    A timeout of 0 will return instantly if a frame wasn't immediately ready.
+	 *
+	 * @param[out] status optional status code returned (@see videoSource::Status).
+	 *                    -2 on ERROR, -1 on EOS, 0 on TIMEOUT, 1 on OK.
 	 *
 	 * @returns `true` if a frame was captured, `false` if there was an error or a timeout occurred.
 	 */
-	virtual bool Capture( void** image, imageFormat format, uint64_t timeout=UINT64_MAX ) = 0;
-
+	virtual bool Capture( void** image, imageFormat format, uint64_t timeout=DEFAULT_TIMEOUT, int* status=NULL ) = 0;
+	
 	/**
 	 * Begin streaming the device.
 	 * After Open() is called, frames from the device will begin to be captured.
@@ -258,6 +308,21 @@ public:
 	inline uint32_t GetFrameRate() const			{ return mOptions.frameRate; }
 
 	/**
+	 * Return the number of frames captured.
+	 */
+	inline uint64_t GetFrameCount() const			{ return mOptions.frameCount; }
+	
+	/**
+	 * Get timestamp of the last captured frame, in nanoseconds.
+ 	 */
+	uint64_t GetLastTimestamp() const { return mLastTimestamp; }
+
+	/**
+	 * Get raw image format.
+ 	 */
+	inline imageFormat GetRawFormat() const { return mRawFormat; }
+
+	/**
 	 * Return the resource URI of the stream.
 	 */
 	inline const URI& GetResource() const			{ return mOptions.resource; }
@@ -301,6 +366,11 @@ public:
 	 * Convert a class type to a string.
 	 */
 	static const char* TypeToStr( uint32_t type );
+	
+	/**
+	 * The default Capture timeout (1000ms)
+	 */
+	static const uint64_t DEFAULT_TIMEOUT=1000;
 
 protected:
 	//videoSource();
@@ -308,6 +378,9 @@ protected:
 
 	bool         mStreaming;
 	videoOptions mOptions;
+
+	uint64_t     mLastTimestamp;
+	imageFormat  mRawFormat;
 };
 
 #endif

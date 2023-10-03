@@ -31,15 +31,6 @@
 #include <signal.h>
 
 
-#ifdef HEADLESS
-	#define IS_HEADLESS() "headless"             // run without display
-	#define DEFAULT_VISUALIZATION "overlay"      // output overlay only
-#else
-	#define IS_HEADLESS() (const char*)NULL      // use display (if attached)
-	#define DEFAULT_VISUALIZATION "overlay|mask" // output overlay + mask
-#endif
-
-
 bool signal_recieved = false;
 
 void sig_handler(int signo)
@@ -151,7 +142,7 @@ int main( int argc, char** argv )
 	/*
 	 * parse command line
 	 */
-	commandLine cmdLine(argc, argv, IS_HEADLESS());
+	commandLine cmdLine(argc, argv);
 
 	if( cmdLine.GetFlag("help") )
 		return usage();
@@ -172,7 +163,7 @@ int main( int argc, char** argv )
 	if( !input )
 	{
 		LogError("segnet:  failed to create input stream\n");
-		return 0;
+		return 1;
 	}
 
 
@@ -182,7 +173,10 @@ int main( int argc, char** argv )
 	videoOutput* output = videoOutput::Create(cmdLine, ARG_POSITION(1));
 	
 	if( !output )
+	{
 		LogError("segnet:  failed to create output stream\n");	
+		return 1;
+	}
 	
 
 	/*
@@ -193,7 +187,7 @@ int main( int argc, char** argv )
 	if( !net )
 	{
 		LogError("segnet:  failed to initialize segNet\n");
-		return 0;
+		return 1;
 	}
 
 	// set alpha blending value for classes that don't explicitly already have an alpha	
@@ -203,29 +197,27 @@ int main( int argc, char** argv )
 	const segNet::FilterMode filterMode = segNet::FilterModeFromStr(cmdLine.GetString("filter-mode", "linear"));
 
 	// get the visualization flags
-	const uint32_t visualizationFlags = segNet::VisualizationFlagsFromStr(cmdLine.GetString("visualize", DEFAULT_VISUALIZATION));
+	const uint32_t visualizationFlags = segNet::VisualizationFlagsFromStr(cmdLine.GetString("visualize", "overlay|mask"));
 
 	// get the object class to ignore (if any)
 	const char* ignoreClass = cmdLine.GetString("ignore-class", "void");
 
-	
 	
 	/*
 	 * processing loop
 	 */
 	while( !signal_recieved )
 	{
-		// capture next image image
+		// capture next image
 		pixelType* imgInput = NULL;
-
-		if( !input->Capture(&imgInput, 1000) )
+		int status = 0;
+		
+		if( !input->Capture(&imgInput, &status) )
 		{
-			// check for EOS
-			if( !input->IsStreaming() )
-				break; 
-
-			LogError("segnet:  failed to capture video frame\n");
-			continue;
+			if( status == videoSource::TIMEOUT )
+				continue;
+			
+			break; // EOS
 		}
 
 		// allocate buffers for this size frame
@@ -281,7 +273,7 @@ int main( int argc, char** argv )
 
 			// check if the user quit
 			if( !output->IsStreaming() )
-				signal_recieved = true;
+				break;
 		}
 
 		// wait for the GPU to finish		

@@ -73,6 +73,8 @@ float adaptFontSize( uint32_t dimension )
 // constructor
 cudaFont::cudaFont()
 {
+	mSize = 0.0f;
+	
 	mCommandCPU = NULL;
 	mCommandGPU = NULL;
 	mCmdIndex   = 0;
@@ -315,6 +317,7 @@ bool cudaFont::init( const char* filename, float size )
 	if( !cudaAllocMapped((void**)&mRectsCPU, (void**)&mRectsGPU, sizeof(float4) * MaxCommands) )
 		return false;
 
+	mSize = size;
 	return true;
 }
 
@@ -504,11 +507,11 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 			pos.x += mGlyphInfo[c].xAdvance;
 
 			// track the maximum glyph size
-			if( maxGlyphSize.x < mGlyphInfo[n].width )
-				maxGlyphSize.x = mGlyphInfo[n].width;
+			if( maxGlyphSize.x < mGlyphInfo[c].width )
+				maxGlyphSize.x = mGlyphInfo[c].width;
 
-			if( maxGlyphSize.y < mGlyphInfo[n].height )
-				maxGlyphSize.y = mGlyphInfo[n].height;
+			if( maxGlyphSize.y < mGlyphInfo[c].height )
+				maxGlyphSize.y = mGlyphInfo[c].height;
 
 			// expand the background rect
 			if( has_bg )

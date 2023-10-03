@@ -191,7 +191,7 @@ int main(int argc, char **argv)
 	ROS_DECLARE_PARAMETER("model_path", model_path);
 	ROS_DECLARE_PARAMETER("prototxt_path", prototxt_path);
 	ROS_DECLARE_PARAMETER("class_labels_path", class_labels_path);
-	ROS_DECLARE_PARAMETER("class_colors_path", class_labels_path);
+	ROS_DECLARE_PARAMETER("class_colors_path", class_colors_path);
 	ROS_DECLARE_PARAMETER("input_blob", input_blob);
 	ROS_DECLARE_PARAMETER("output_blob", output_blob);
 	ROS_DECLARE_PARAMETER("mask_filter", mask_filter_str);
@@ -205,7 +205,7 @@ int main(int argc, char **argv)
 	ROS_GET_PARAMETER("model_path", model_path);
 	ROS_GET_PARAMETER("prototxt_path", prototxt_path);
 	ROS_GET_PARAMETER("class_labels_path", class_labels_path);
-	ROS_GET_PARAMETER("class_colors_path", class_labels_path);
+	ROS_GET_PARAMETER("class_colors_path", class_colors_path);
 	ROS_GET_PARAMETER("input_blob", input_blob);
 	ROS_GET_PARAMETER("output_blob", output_blob);
 	ROS_GET_PARAMETER("mask_filter", mask_filter_str);
@@ -228,17 +228,8 @@ int main(int argc, char **argv)
 	}
 	else
 	{
-		// determine which built-in model was requested
-		segNet::NetworkType model = segNet::NetworkTypeFromStr(model_name.c_str());
-
-		if( model == segNet::SEGNET_CUSTOM )
-		{
-			ROS_ERROR("invalid built-in pretrained model name '%s', defaulting to cityscapes", model_name.c_str());
-			model = segNet::FCN_RESNET18_CITYSCAPES_1024x512;
-		}
-
 		// create network using the built-in model
-		net = segNet::Create(model);
+		net = segNet::Create(model_name.c_str());
 	}
 
 	if( !net )

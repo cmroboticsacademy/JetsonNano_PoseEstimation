@@ -67,6 +67,23 @@ std::string locateFile( const std::string& path );
 std::string locateFile( const std::string& path, std::vector<std::string>& locations );
 
 /**
+ * Loads a binary file into a buffer that it allocates.
+ * @return the size in bytes read (or 0 on error)
+ * @ingroup filesystem
+ */
+size_t loadFile( const std::string& path, void** buffer );
+
+/**
+ * Read a text file into a string.  It's assumed that the file is text, and that it is of a
+ * managegable size (otherwise you should use buffering and read it line-by-line)
+ *
+ * @return the string containing the file contents, or an empty string if an error occurred.
+ *
+ * @ingroup filesystem
+ */
+std::string readFile( const std::string& path );
+
+/**
  * Join two paths, and properly include a path separator (`/`) as needed.
  * For example, 'pathJoin("~/workspace", "somefile.xml")` would return `~/workspace/somefile.xml`.
  * @ingroup filesystem
@@ -79,6 +96,19 @@ std::string pathJoin( const std::string& a, const std::string& b );
  * @ingroup filesystem
  */
 std::string pathDir( const std::string& path );
+
+/**
+ * Return the filename from the path, including the file extension.
+ * @ingroup filesystem
+ */
+std::string pathFilename( const std::string& path );
+
+/**
+ * Split a path into directory and filename components.
+ * The directory will be returned first in the pair, and the filename second.
+ * @ingroup filesystem
+ */
+std::pair<std::string, std::string> splitPath( const std::string& path );
 
 /**
  * File types
@@ -100,15 +130,20 @@ enum fileTypes
  * Return a sorted list of the files in the specified directory.  listDir() will glob files from
  * the specified path, and filter against wildcard characters including `*` and `?`.
  * For example, valid paths would include `~/workspace`, `~/workspace/*.jpg`, ect.
+ *
  * @see here for a description of wildcard matching:  https://www.man7.org/linux/man-pages/man7/glob.7.html
+ *
  * @param path the path of the directory (may include wildcard characters)
  * @param[out] list the alphanumerically sorted output list of the files in the directory
  * @param mask filter by file type (by default, any file including directories will be included).
  *             The mask should consist of fileTypes OR'd together (e.g. `FILE_REGULAR|FILE_DIR`).
+ *
  * @ingroup filesystem
  */
 bool listDir( const std::string& path, std::vector<std::string>& list, uint32_t mask=0 );
 
+/**
+ * Return the directory 
 /**
  * Verify path and return true if the file exists.
  * @param mask filter by file type (by default, any file including directories will be checked).
@@ -187,31 +222,6 @@ std::string fileRemoveExtension( const std::string& filename );
  * @ingroup filesystem
  */
 std::string fileChangeExtension( const std::string& filename, const std::string& newExtension );
-
-/**
- * Return the absolute path that of the calling process executable,
- * include the process executable's filename.
- * @ingroup filesystem
- */
-std::string processPath();
-
-/**
- * Return the directory that the calling process resides in.
- * For example, if the process executable is located at `/usr/bin/exe`,
- * then `processDirectory()` would return the path `/usr/bin`.
- *
- * @note to retrieve the full path of the calling process, including
- *       the process executable's filename, @see processPath()
- *
- * @ingroup filesystem
- */
-std::string processDirectory();
-
-/**
- * Return the current working directory of the calling process.
- * @ingroup filesystem
- */
-std::string workingDirectory();
 
 
 #endif

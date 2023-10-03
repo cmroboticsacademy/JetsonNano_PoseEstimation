@@ -1,25 +1,23 @@
-# Deep Learning Nodes for ROS/ROS2
-This repo contains deep learning inference nodes and camera/video streaming nodes for ROS/ROS2 with support for Jetson Nano/TX1/TX2/Xavier NX/AGX Xavier and TensorRT.
+# DNN Inference Nodes for ROS/ROS2
+This package contains DNN inference nodes and camera/video streaming nodes for ROS/ROS2 with support for NVIDIA **[Jetson Nano / TX1 / TX2 / Xavier / Orin](https://developer.nvidia.com/embedded-computing)** devices and TensorRT.
 
-The nodes use the image recognition, object detection, and semantic segmentation DNN's from the [`jetson-inference`](https://github.com/dusty-nv/jetson-inference) library and NVIDIA [Hello AI World](https://developer.nvidia.com/embedded/twodaystoademo) tutorial, which come with several built-in pretrained networks for classification, detection, and segmentation and the ability to load customized user-trained models.
+The nodes use the image recognition, object detection, and semantic segmentation DNN's from the [`jetson-inference`](https://github.com/dusty-nv/jetson-inference) library and NVIDIA [Hello AI World](https://github.com/dusty-nv/jetson-inference#hello-ai-world) tutorial, which come with several built-in pretrained networks for classification, detection, and segmentation and the ability to load customized user-trained models.
 
-The camera/video streaming nodes support the following input/output interfaces:
+The camera & video streaming nodes support the following [input/output interfaces](https://github.com/dusty-nv/jetson-inference/blob/master/docs/aux-streaming.md):
 
 * MIPI CSI cameras
 * V4L2 cameras
-* RTP / RTSP
+* RTP / RTSP streams
+* WebRTC streams
 * Videos & Images
 * Image sequences
 * OpenGL windows
 
-ROS Melodic and ROS2 Eloquent are supported, and the latest version of JetPack is recommended.
+Various distribution of ROS are supported either from source or through containers (including Melodic, Noetic, Foxy, Galactic, Humble, and Iron).  The same branch supports both ROS1 and ROS2.
 
 ### Table of Contents
 
 * [Installation](#installation)
-	* [jetson-inference](#jetson-inference)
-	* [ROS/ROS2](#rosros2)
-	* [ros_deep_learning](#ros_deep_learning-1)
 * [Testing](#testing)
 	* [Video Viewer](#video-viewer)
 	* [imagenet Node](#imagenet-node)
@@ -34,9 +32,22 @@ ROS Melodic and ROS2 Eloquent are supported, and the latest version of JetPack i
 
 ## Installation
 
-First, install the latest version of [JetPack](https://developer.nvidia.com/embedded/jetpack) on your Jetson.
+The easiest way to get up and running is by cloning [jetson-inference](https://github.com/dusty-nv/jetson-inference) (which ros_deep_learning is a submodule of) and running the pre-built container, which automatically mounts the required model directories and devices:
 
-Then, follow the steps below to install the needed components on your Jetson.
+``` bash
+$ git clone --recursive --depth=1 https://github.com/dusty-nv/jetson-inference
+$ cd jetson-inference
+$ docker/run.sh --ros=humble  # noetic, foxy, galactic, humble, iron
+```
+
+> **note**: the ros_deep_learning nodes rely on data from the jetson-inference tree for storing models, so clone and mount `jetson-inference/data` if you're using your own container or source installation method.
+
+The `--ros` argument to the [`docker/run.sh`](https://github.com/dusty-nv/jetson-inference/blob/master/docker/run.sh) script selects the ROS distro to use.  They in turn use the `ros:$ROS_DISTRO-pytorch` container images from [jetson-containers](https://github.com/dusty-nv/jetson-containers), which include jetson-inference and this.
+
+For previous information about building the ros_deep_learning package for an uncontainerized ROS installation, expand the section below (the parts about installing ROS may require adapting for the particular version of ROS/ROS2 that you want to install)
+
+<details>
+<summary>Legacy Install Instructions</summary>
 
 ### jetson-inference
 
@@ -45,7 +56,7 @@ These ROS nodes use the DNN objects from the [`jetson-inference`](https://github
 ```bash
 $ cd ~
 $ sudo apt-get install git cmake
-$ git clone --recursive https://github.com/dusty-nv/jetson-inference
+$ git clone --recursive --depth=1 https://github.com/dusty-nv/jetson-inference
 $ cd jetson-inference
 $ mkdir build
 $ cd build
@@ -113,6 +124,8 @@ $ source install/local_setup.bash
 
 The nodes should now be built and ready to use.  Remember to source the overlay as shown above so that ROS can find the nodes.
 
+</details>
+
 ## Testing
 
 Before proceeding, if you're using ROS Melodic make sure that `roscore` is running first:
@@ -128,10 +141,10 @@ If you're using ROS2, running the core service is no longer required.
 First, it's recommended to test that you can stream a video feed using the [`video_source`](#video-source-node) and [`video_output`](#video-output-node) nodes.  See [Camera Streaming & Multimedia](https://github.com/dusty-nv/jetson-inference/blob/master/docs/aux-streaming.md) for valid input/output streams, and substitute your desired `input` and `output` argument below.  For example, you can use video files for the input or output, or use V4L2 cameras instead of MIPI CSI cameras.  You can also use RTP/RTSP streams over the network.
 
 ```bash
-# ROS Melodic
+# ROS
 $ roslaunch ros_deep_learning video_viewer.ros1.launch input:=csi://0 output:=display://0
 
-# ROS2 Eloquent
+# ROS2
 $ ros2 launch ros_deep_learning video_viewer.ros2.launch input:=csi://0 output:=display://0
 ```
 
@@ -142,10 +155,10 @@ You can launch a classification demo with the following commands - substitute yo
 Note that the `imagenet` node also publishes classification metadata on the `imagenet/classification` topic in a [`vision_msgs/Detection2DArray`](http://docs.ros.org/melodic/api/vision_msgs/html/msg/Detection2DArray.html) message -- see the [Topics & Parameters](#imagenet-node-1) section below for more info.
 
 ```bash
-# ROS Melodic
+# ROS
 $ roslaunch ros_deep_learning imagenet.ros1.launch input:=csi://0 output:=display://0
 
-# ROS2 Eloquent
+# ROS2
 $ ros2 launch ros_deep_learning imagenet.ros2.launch input:=csi://0 output:=display://0
 ```
 
@@ -156,10 +169,10 @@ To launch an object detection demo, substitute your desired camera or video path
 #### 
 
 ```bash
-# ROS Melodic
+# ROS
 $ roslaunch ros_deep_learning detectnet.ros1.launch input:=csi://0 output:=display://0
 
-# ROS2 Eloquent
+# ROS2
 $ ros2 launch ros_deep_learning detectnet.ros2.launch input:=csi://0 output:=display://0
 ```
 
@@ -168,10 +181,10 @@ $ ros2 launch ros_deep_learning detectnet.ros2.launch input:=csi://0 output:=dis
 To launch a semantic segmentation demo, substitute your desired camera or video path to the `input` argument below (see [here](https://github.com/dusty-nv/jetson-inference/blob/master/docs/aux-streaming.md) for valid input/output streams).  Note that the `segnet` node also publishes raw segmentation results to the `segnet/class_mask` topic -- see the [Topics & Parameters](#segnet-node-1) section below for more info.
 
 ```bash
-# ROS Melodic
+# ROS
 $ roslaunch ros_deep_learning segnet.ros1.launch input:=csi://0 output:=display://0
 
-# ROS2 Eloquent
+# ROS2
 $ ros2 launch ros_deep_learning segnet.ros2.launch input:=csi://0 output:=display://0
 ```
 

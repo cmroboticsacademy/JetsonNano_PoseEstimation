@@ -1,11 +1,8 @@
-roscore &
+echo "**** Starting... ****"
+roslaunch ros_deep_learning video_source.ros1.launch &
 sleep 5
-rosrun jetbot_ros jetbot_camera &
-sleep 1
+echo "**** running jetbot_control ****"
 rosrun jetbot_ros jetbot_control.py &
-sleep 1
-rosrun jetbot_ros camera_info_publisher.py &
-sleep 1
-ROS_NAMESPACE=jetbot_camera rosrun image_proc image_proc &
 sleep 2
+echo "**** running navigation_dev ****"
 roslaunch navigation_dev navigation.launch &

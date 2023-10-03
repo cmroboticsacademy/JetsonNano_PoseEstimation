@@ -41,8 +41,8 @@ __global__ void gpuPerspectiveWarp( T* input, T* output, int width, int height,
 								 m1.x * vec.x + m1.y * vec.y + m1.z * vec.z,
 								 m2.x * vec.x + m2.y * vec.y + m2.z * vec.z );
 	
-	const int u = vec_out.x;
-	const int v = vec_out.y;
+	const int u = vec_out.x / vec_out.z;
+	const int v = vec_out.y / vec_out.z;
 	
 	T px;
 
@@ -176,3 +176,74 @@ cudaError_t cudaWarpAffine( uchar4* input, uchar4* output, uint32_t width, uint3
 }
 
 
+//----------------------------------------------------------------------------------------
+// gpuPerspectiveWarp2 (supports different input/output dims)
+//----------------------------------------------------------------------------------------
+template<typename T>
+__global__ void gpuPerspectiveWarp2( T* input, int inputWidth, int inputHeight,
+							  T* output, int outputWidth, int outputHeight,
+						       float3 m0, float3 m1, float3 m2 )
+{
+	const int x = blockDim.x * blockIdx.x + threadIdx.x;
+	const int y = blockDim.y * blockIdx.y + threadIdx.y;
+				   
+	if( x >= outputWidth || y >= outputHeight )
+		return;
+	
+	const float3 vec = make_float3(x, y, 1.0f);
+				 
+	const float3 vec_out = make_float3( m0.x * vec.x + m0.y * vec.y + m0.z * vec.z,
+								 m1.x * vec.x + m1.y * vec.y + m1.z * vec.z,
+								 m2.x * vec.x + m2.y * vec.y + m2.z * vec.z );
+	
+	const int u = vec_out.x / vec_out.z;
+	const int v = vec_out.y / vec_out.z;
+
+	if( u < inputWidth && v < inputHeight && u >= 0 && v >= 0 )
+		output[y * outputWidth + x] = input[v * inputWidth + u];
+} 
+
+cudaError_t cudaWarpPerspective( void* input, uint32_t inputWidth, uint32_t inputHeight, imageFormat inputFormat,
+						   void* output, uint32_t outputWidth, uint32_t outputHeight, imageFormat outputFormat,
+					        const float transform[3][3], bool transform_inverted )
+{
+	if( !input || !output )
+		return cudaErrorInvalidDevicePointer;
+
+	if( inputWidth == 0 || inputHeight == 0 || outputWidth == 0 || outputHeight == 0 )
+		return cudaErrorInvalidValue;
+
+	if( inputFormat != outputFormat )
+	{
+		LogError(LOG_CUDA "cudaWarpPerspective() -- input and output images must be of the same datatype/format\n");
+		return cudaErrorInvalidValue;
+	}
+	
+	// setup the transform
+	float3 cuda_mat[3];
+	invertTransform(cuda_mat, transform, transform_inverted);
+
+	// launch kernel
+	const dim3 blockDim(8, 8);
+	const dim3 gridDim(iDivUp(outputWidth,blockDim.x), iDivUp(outputHeight,blockDim.y));
+
+	#define LAUNCH_PERSPECTIVE_WARP2(type) \
+		gpuPerspectiveWarp2<type><<<gridDim, blockDim>>>((type*)input, inputWidth, inputHeight, (type*)output, outputWidth, outputHeight, cuda_mat[0], cuda_mat[1], cuda_mat[2])
+	
+	if( outputFormat == IMAGE_RGB8 )
+		LAUNCH_PERSPECTIVE_WARP2(uchar3);
+	else if( outputFormat == IMAGE_RGBA8 )
+		LAUNCH_PERSPECTIVE_WARP2(uchar4);
+	else if( outputFormat == IMAGE_RGB32F )
+		LAUNCH_PERSPECTIVE_WARP2(float3); 
+	else if( outputFormat == IMAGE_RGBA32F )
+		LAUNCH_PERSPECTIVE_WARP2(float4);
+	else
+	{
+		imageFormatErrorMsg(LOG_CUDA, "cudaWarpPerspective()", outputFormat);
+		return cudaErrorInvalidValue;
+	}
+		
+	return cudaGetLastError();
+}
+						   

@@ -29,6 +29,9 @@
 #include "videoSource.h"
 
 
+// Forward declarations
+class WebRTCServer;
+struct WebRTCPeer;
 struct _GstAppSink;
 
 
@@ -63,18 +66,12 @@ public:
 	 * Destructor
 	 */
 	~gstDecoder();
-	
+
 	/**
 	 * Capture the next decoded frame.
 	 * @see videoSource::Capture()
 	 */
-	template<typename T> bool Capture( T** image, uint64_t timeout=UINT64_MAX )		{ return Capture((void**)image, imageFormatFromType<T>(), timeout); }
-	
-	/**
-	 * Capture the next decoded frame.
-	 * @see videoSource::Capture()
-	 */
-	virtual bool Capture( void** image, imageFormat format, uint64_t timeout=UINT64_MAX );
+	virtual bool Capture( void** image, imageFormat format, uint64_t timeout=DEFAULT_TIMEOUT, int* status=NULL );
 
 	/**
 	 * Open the stream.
@@ -133,28 +130,38 @@ protected:
 	void checkMsgBus();
 	void checkBuffer();
 	bool buildLaunchStr();
+	bool discover();
 	
 	bool init();
-	bool discover();
+	bool initPipeline();
+	void destroyPipeline();
 	
 	inline bool isLooping() const { return (mOptions.loop < 0) || ((mOptions.loop > 0) && (mLoopCount < mOptions.loop)); }
 
+	// appsink callbacks
 	static void onEOS(_GstAppSink* sink, void* user_data);
+	
 	static GstFlowReturn onPreroll(_GstAppSink* sink, void* user_data);
 	static GstFlowReturn onBuffer(_GstAppSink* sink, void* user_data);
 
-	_GstBus*     mBus;
-	_GstAppSink* mAppSink;
-	_GstElement* mPipeline;
+	// WebRTC callbacks
+	static void onWebsocketMessage( WebRTCPeer* peer, const char* message, size_t message_size, void* user_data );
 
-	Event	   mWaitEvent;
-	std::string  mLaunchStr;
-	bool         mCustomSize;
-	bool		   mCustomRate;
-	bool         mEOS;
-	size_t	   mLoopCount;
+	GstBus*      mBus;
+	GstElement*  mPipeline;
+	_GstAppSink* mAppSink;
+	
+	Event	  mWaitEvent;
+	std::string mLaunchStr;
+	bool        mCustomSize;
+	bool		  mCustomRate;
+	bool        mEOS;
+	size_t	  mLoopCount;
 		
 	gstBufferManager* mBufferManager;
+	
+	WebRTCServer* mWebRTCServer;
+	bool mWebRTCConnected;
 };
   
 #endif

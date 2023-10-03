@@ -21,12 +21,15 @@
  */
 
 #include "gstUtility.h"
+#include "filesystem.h"
+
+#include "NvInfer.h"
 #include "logging.h"
 
-#include <gst/gst.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <strings.h>
+#include <algorithm>
 
 
 //---------------------------------------------------------------------------------------------
@@ -364,5 +367,266 @@ gboolean gst_message_print(GstBus* bus, GstMessage* message, gpointer user_data)
 	}
 
 	return TRUE;
+}
+
+
+// gst_build_filesink
+bool gst_build_filesink( const URI& uri, videoOptions::Codec codec, std::ostringstream& pipeline )
+{
+	if( uri.path.length() <= 0 || uri.protocol != "file" )
+	{
+		LogError(LOG_GSTREAMER "invalid file path -- unable to build filesink pipeline\n");
+		return false;
+	}
+	
+	#define ADD_CODEC_PARSER() \
+		if( codec == videoOptions::CODEC_H264 ) \
+			pipeline << "h264parse ! "; \
+		else if( codec == videoOptions::CODEC_H265 ) \
+			pipeline << "h265parse ! ";
+		
+	if( uri.extension == "mkv" )
+	{
+		ADD_CODEC_PARSER();
+		pipeline << "matroskamux ! ";
+	}
+	else if( uri.extension == "flv" )
+	{
+		ADD_CODEC_PARSER();
+		pipeline << "flvmux ! ";
+	}
+	else if( uri.extension == "avi" )
+	{
+		if( codec == videoOptions::CODEC_H265 || codec == videoOptions::CODEC_VP9 )
+		{
+			LogError(LOG_GSTREAMER "AVI format doesn't support codec %s\n", videoOptions::CodecToStr(codec));
+			LogError(LOG_GSTREAMER "supported AVI codecs are:\n");
+			LogError(LOG_GSTREAMER "   * h264\n");
+			LogError(LOG_GSTREAMER "   * vp8\n");
+			LogError(LOG_GSTREAMER "   * mjpeg\n");
+
+			return false;
+		}
+
+		pipeline << "avimux ! ";
+	}
+	else if( uri.extension == "mp4" || uri.extension == "qt" )
+	{
+		ADD_CODEC_PARSER();
+		pipeline << "qtmux ! ";
+	}
+	else if( uri.extension != "h264" && uri.extension != "h265" )
+	{
+		printf(LOG_GSTREAMER "unsupported video file extension (%s)\n", uri.extension.c_str());
+		printf(LOG_GSTREAMER "supported video extensions are:\n");
+		printf(LOG_GSTREAMER "   * mkv\n");
+		printf(LOG_GSTREAMER "   * mp4, qt\n");
+		printf(LOG_GSTREAMER "   * flv\n");
+		printf(LOG_GSTREAMER "   * avi\n");
+		printf(LOG_GSTREAMER "   * h264, h265\n");
+
+		return false;
+	}
+
+	pipeline << "filesink location=" << uri.location << " ";
+	return true;
+}
+
+
+// gst_select_decoder
+const char* gst_select_decoder( videoOptions::Codec codec, videoOptions::CodecType& type )
+{
+#if defined(__aarch64__)
+#if NV_TENSORRT_MAJOR > 8 || (NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR >= 4)
+	if( type == videoOptions::CODEC_OMX )  // JetPack 5 doesn't have OMX
+		type = gst_default_codec();
+#endif
+#elif defined(__x86_64__) || defined(__amd64__)
+	if( type == videoOptions::CODEC_OMX || type == videoOptions::CODEC_V4L2 )
+		type = gst_default_codec();
+#endif
+
+	if( type == videoOptions::CODEC_NVENC || type == videoOptions::CODEC_NVDEC )
+		type = gst_default_codec();
+	
+	if( codec == videoOptions::CODEC_MJPEG )
+		type = videoOptions::CODEC_CPU;
+	
+	if( codec == videoOptions::CODEC_RAW )
+		type = videoOptions::CODEC_CPU;
+	
+	if( type == videoOptions::CODEC_CPU )
+	{
+		switch(codec)
+		{
+			case videoOptions::CODEC_H264:   return "avdec_h264";
+			case videoOptions::CODEC_H265:   return "avdec_h265";
+			case videoOptions::CODEC_VP8:	   return "vp8dec";
+			case videoOptions::CODEC_VP9:    return "vp9dec";
+			case videoOptions::CODEC_MPEG2:  return "avdec_mpeg2video";
+			case videoOptions::CODEC_MPEG4:  return "avdec_mpeg4";
+			case videoOptions::CODEC_MJPEG:  return "jpegdec";
+		}
+	}
+	else if( type == videoOptions::CODEC_OMX )
+	{
+	#if GST_CHECK_VERSION(1,0,0)
+		switch(codec)
+		{
+			case videoOptions::CODEC_H264:   return "omxh264dec";
+			case videoOptions::CODEC_H265:   return "omxh265dec";
+			case videoOptions::CODEC_VP8:	   return "omxvp8dec";
+			case videoOptions::CODEC_VP9:    return "omxvp9dec";
+			case videoOptions::CODEC_MPEG2:  return "omxmpeg2videodec";
+			case videoOptions::CODEC_MPEG4:  return "omxmpeg4videodec";
+			case videoOptions::CODEC_MJPEG:  return "nvjpegdec";
+		}
+	#else
+		switch(codec)
+		{
+			case videoOptions::CODEC_H264:   return "nv_omx_h264dec";
+			case videoOptions::CODEC_H265:   return "nv_omx_h265dec";
+			case videoOptions::CODEC_VP8:	   return "nv_omx_vp8dec";
+			case videoOptions::CODEC_VP9:    return "nv_omx_vp9dec";
+			case videoOptions::CODEC_MPEG2:  return "nx_omx_mpeg2videodec";
+			case videoOptions::CODEC_MPEG4:  return "nx_omx_mpeg4videodec";
+			case videoOptions::CODEC_MJPEG:  return "nvjpegdec";
+		}
+	#endif
+	}
+	else if( type == videoOptions::CODEC_V4L2 )
+	{
+		if( codec == videoOptions::CODEC_MJPEG )
+			return "nvjpegdec";
+		
+		return "nvv4l2decoder";
+	}
+	
+	return NULL;
+}
+
+
+// check for hardware-accelerated encoder support
+static bool gst_query_hw_encoder()
+{
+#if defined(__aarch64__)
+	std::string board = readFile("/proc/device-tree/model");
+	
+	if( board.length() == 0 )
+		board = readFile("/tmp/nv_jetson_model");  // this is where it gets mounted in the container
+	
+	if( board.length() == 0 )
+		return false;
+	
+	LogVerbose(LOG_GSTREAMER "gstEncoder -- detected board '%s'\n", board.c_str());
+	
+	// convert to lowercase for robustness
+	std::transform(board.begin(), board.end(), board.begin(), [](unsigned char c){ return std::tolower(c); });
+	
+	// look for specific boards that don't have encoder hw
+	if( board.find("orin nano") != std::string::npos )
+		return false;
+	
+	return true;
+#else
+	// TODO check for NVENC/NVDEC
+	return false;
+#endif
+}
+
+
+// gst_select_encoder
+const char* gst_select_encoder( videoOptions::Codec codec, videoOptions::CodecType& type )
+{
+#if defined(__aarch64__)
+#if NV_TENSORRT_MAJOR > 8 || (NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR >= 4)
+	if( type == videoOptions::CODEC_OMX )
+	{
+		// JetPack 5 doesn't have OMX
+		type = gst_default_codec();
+	}
+	else if( type == videoOptions::CODEC_V4L2 )
+	{
+		const bool has_hw_encoder = gst_query_hw_encoder();
+		
+		if( !has_hw_encoder )
+		{
+			LogWarning(LOG_GSTREAMER "gstEncoder -- hardware encoder not detected, reverting to CPU encoder\n");
+			type = videoOptions::CODEC_CPU;
+		}
+	}
+#endif
+#elif defined(__x86_64__) || defined(__amd64__)
+	if( type == videoOptions::CODEC_OMX || type == videoOptions::CODEC_V4L2 )
+		type = gst_default_codec();
+#endif
+
+	if( type == videoOptions::CODEC_NVENC || type == videoOptions::CODEC_NVDEC )
+		type = gst_default_codec();  // TODO NVENC/NVDEC support
+	
+	if( codec == videoOptions::CODEC_RAW )
+		type = videoOptions::CODEC_CPU;
+	
+	if( type == videoOptions::CODEC_CPU )
+	{
+		switch(codec)
+		{
+			case videoOptions::CODEC_H264:   return "x264enc";
+			case videoOptions::CODEC_H265:   return "x265enc";
+			case videoOptions::CODEC_VP8:	   return "vp8enc";
+			case videoOptions::CODEC_VP9:    return "vp9enc";
+			case videoOptions::CODEC_MJPEG:  return "jpegenc";
+		}
+	}
+	else if( type == videoOptions::CODEC_OMX )
+	{
+	#if GST_CHECK_VERSION(1,0,0)
+		switch(codec)
+		{
+			case videoOptions::CODEC_H264:   return "omxh264enc";
+			case videoOptions::CODEC_H265:   return "omxh265enc";
+			case videoOptions::CODEC_VP8:	   return "omxvp8enc";
+			case videoOptions::CODEC_VP9:    return "omxvp9enc";
+			case videoOptions::CODEC_MJPEG:  return "nvjpegenc";
+		}
+	#else
+		switch(codec)
+		{
+			case videoOptions::CODEC_H264:   return "nv_omx_h264enc";
+			case videoOptions::CODEC_H265:   return "nv_omx_h265enc";
+			case videoOptions::CODEC_VP8:	   return "nv_omx_vp8enc";
+			case videoOptions::CODEC_VP9:    return "nv_omx_vp9enc";
+			case videoOptions::CODEC_MJPEG:  return "nvjpegenc";
+		}
+	#endif
+	}
+	else if( type == videoOptions::CODEC_V4L2 )
+	{
+		switch(codec)
+		{
+			case videoOptions::CODEC_H264:   return "nvv4l2h264enc";
+			case videoOptions::CODEC_H265:   return "nvv4l2h265enc";
+			case videoOptions::CODEC_VP8:	   return "nvv4l2vp8enc";
+			case videoOptions::CODEC_VP9:    return "nvv4l2vp9enc";
+			case videoOptions::CODEC_MJPEG:  return "nvjpegenc";
+		}
+	}
+	
+	return NULL;
+}
+
+
+// gst_default_codec_type
+videoOptions::CodecType gst_default_codec()
+{
+#if defined(__aarch64__)
+#if NV_TENSORRT_MAJOR > 8 || (NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR >= 4)
+	return videoOptions::CODEC_V4L2;	// JetPack 5
+#else
+	return videoOptions::CODEC_OMX;	// JetPack 4
+#endif
+#elif defined(__x86_64__) || defined(__amd64__)
+	return videoOptions::CODEC_CPU;	// x86
+#endif
 }
 

@@ -36,17 +36,25 @@
  * @ingroup video
  */
 #define VIDEO_OUTPUT_USAGE_STRING  "videoOutput arguments: \n" 							\
-		  "    output_URI           resource URI of the output stream, for example:\n"		\
-		  "                             * file://my_image.jpg    (image file)\n"			\
-		  "                             * file://my_video.mp4    (video file)\n"			\
-		  "                             * file://my_directory/   (directory of images)\n"	\
-		  "                             * rtp://<remote-ip>:1234 (RTP stream)\n"			\
-		  "                             * display://0            (OpenGL window)\n" 		\
+		  "    output               resource URI of the output stream, for example:\n"		\
+		  "                             * file://my_image.jpg       (image file)\n"		\
+		  "                             * file://my_video.mp4       (video file)\n"		\
+		  "                             * file://my_directory/      (directory of images)\n"	\
+		  "                             * rtp://<remote-ip>:1234    (RTP stream)\n"		\
+		  "                             * rtsp://@:8554/my_stream   (RTSP stream)\n"		\
+		  "                             * webrtc://@:1234/my_stream (WebRTC stream)\n"      	\
+		  "                             * display://0               (OpenGL window)\n" 		\
 		  "  --output-codec=CODEC   desired codec for compressed output streams:\n"		\
 		  "                            * h264 (default), h265\n"						\
 		  "                            * vp8, vp9\n"									\
 		  "                            * mpeg2, mpeg4\n"								\
 		  "                            * mjpeg\n"        								\
+		  "  --output-encoder=TYPE  the encoder engine to use, one of these:\n"              \
+		  "                            * cpu\n"                                              \
+		  "                            * omx  (aarch64/JetPack4 only)\n"                     \
+		  "                            * v4l2 (aarch64/JetPack5 only)\n"                     \
+		  "  --output-save=FILE     path to a video file for saving the compressed stream\n" \
+		  "                         to disk, in addition to the primary output above\n"      \
 		  "  --bitrate=BITRATE      desired target VBR bitrate for compressed streams,\n"    \
 		  "                         in bits per second. The default is 4000000 (4 Mbps)\n"	\
 		  "  --headless             don't create a default OpenGL GUI window\n\n"
@@ -68,6 +76,16 @@
  *
  *     - `rtp://<remote-host>:1234` to broadcast a compressed RTP stream to a remote host, where you should
  *        substitute `<remote-host>` with the remote host's IP address or hostname, and `1234` is the port.
+ *
+ *     - `rtsp://@:8554/my_stream` to serve a compressed RTSP stream at the specified port and stream path.
+ *        RTSP clients can connect to the stream at the specified path.  Using this will create a RTSP server
+ *        that can handle multiple videoOutput streams on the same port but with different paths
+ *        (e.g. `rtsp://<hostname>:8554/my_stream_1`, `rtsp://<hostname>:8554/my_stream_2`, ect)
+ *
+ *     - `webrtc://@:1234/my_stream` to serve a compressed WebRTC stream at the specified port and path
+ *        that browsers can connect to and view.  Users will be able to navigate their browser to
+ *        `http://<hostname>:1234/my_stream` and view a rudimentary video player that plays the stream.
+ *        More advanced web front-ends can be created by using standard client-side Javascript WebRTC APIs.
  *
  *     - `file:///home/user/my_video.mp4` for saving videos, images, and directories of images to disk.
  *        You can leave off the `file://` protocol identifier and it will be deduced from the path.
@@ -93,30 +111,9 @@ public:
 	static videoOutput* Create( const videoOptions& options );
 
 	/**
-	 * Create videoOutput interface from a resource URI string and optional videoOptions.
-	 * @see the documentation above and the URI struct for more info about resource URI's.
-	 */
-	static videoOutput* Create( const char* URI, const videoOptions& options=videoOptions() );
-
-	/**
-	 * Create videoOutput interface from a resource URI string and parsing command line arguments.
-	 * @see videoOptions for valid command-line arguments to be parsed.
-	 * @see the documentation above and the URI struct for more info about resource URI's.
-	 */
-	static videoOutput* Create( const char* URI, const commandLine& cmdLine );
-	
-	/**
-	 * Create videoOutput interface from a resource URI string and parsing command line arguments.
-	 * @see videoOptions for valid command-line arguments to be parsed.
-	 * @see the documentation above and the URI struct for more info about resource URI's.
-	 */
-	static videoOutput* Create( const char* URI, const int argc, char** argv );
-
-	/**
 	 * Create videoOutput interface by parsing command line arguments, including the resource URI.
 	 * @param positionArg indicates the positional argument number in the command line of
-	 *                    the resource URI (or `-1` if a positional argument isn't used,
-	 *                    and should instead be parsed from the `--input=` option). 
+	 *                    the resource URI (or `-1` if a positional argument isn't used). 
 	 * @see videoOptions for valid command-line arguments to be parsed.
 	 * @see the documentation above and the URI struct for more info about resource URI's.
 	 */
@@ -125,13 +122,36 @@ public:
 	/**
 	 * Create videoOutput interface by parsing command line arguments, including the resource URI.
 	 * @param positionArg indicates the positional argument number in the command line of
-	 *                    the resource URI (or `-1` if a positional argument isn't used,
-	 *                    and should instead be parsed from the `--input=` option). 
+	 *                    the resource URI (or `-1` if a positional argument isn't used). 
 	 * @see videoOptions for valid command-line arguments to be parsed.
 	 * @see the documentation above and the URI struct for more info about resource URI's.
 	 */
 	static videoOutput* Create( const commandLine& cmdLine, int positionArg=-1 );
+
+	/**
+	 * Create videoOutput interface from a resource URI string and optional videoOptions.
+	 * @see the documentation above and the URI struct for more info about resource URI's.
+	 */
+	static videoOutput* Create( const char* URI, const videoOptions& options=videoOptions() );
+
+	/**
+	 * Create videoOutput interface from a resource URI string and parsing command line arguments.
+	 * @param positionArg indicates the positional argument number in the command line of
+	 *                    the resource URI (or `-1` if a positional argument isn't used). 
+	 * @see videoOptions for valid command-line arguments to be parsed.
+	 * @see the documentation above and the URI struct for more info about resource URI's.
+	 */
+	static videoOutput* Create( const char* URI, const commandLine& cmdLine, int positionArg=-1, const videoOptions& options=videoOptions() );
 	
+	/**
+	 * Create videoOutput interface from a resource URI string and parsing command line arguments.
+	 * @param positionArg indicates the positional argument number in the command line of
+	 *                    the resource URI (or `-1` if a positional argument isn't used). 
+	 * @see videoOptions for valid command-line arguments to be parsed.
+	 * @see the documentation above and the URI struct for more info about resource URI's.
+	 */
+	static videoOutput* Create( const char* URI, const int argc, char** argv, int positionArg=-1, const videoOptions& options=videoOptions() );
+
 	/**
 	 * Create videoOutput interface that acts as a NULL output and does nothing with incoming frames.
 	 * CreateNullOutput() can be used when there are no other outputs created and programs expect one to run.
@@ -224,6 +244,11 @@ public:
 	 * Return the framerate, in Hz or FPS.
 	 */
 	inline float GetFrameRate() const						{ return mOptions.frameRate; }
+	
+	/**
+	 * Return the number of frames output.
+	 */
+	inline uint64_t GetFrameCount() const					{ return mOptions.frameCount; }
 	
 	/**
 	 * Return the resource URI of the stream.

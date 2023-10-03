@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 #
 # Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
 #
@@ -22,40 +22,41 @@
 #
 
 import cv2
-import jetson.utils
 import argparse
 
+from jetson_utils import (loadImage, cudaAllocMapped, cudaConvertColor, 
+                          cudaDeviceSynchronize, cudaToNumpy)
 
 # parse the command line
 parser = argparse.ArgumentParser(description='Convert an image from CUDA to OpenCV')
 
 parser.add_argument("file_in", type=str, default="images/jellyfish.jpg", nargs='?', help="filename of the input image to process")
-parser.add_argument("file_out", type=str, default="cuda-to-cv.jpg", nargs='?', help="filename of the output image to save")
+parser.add_argument("file_out", type=str, default="images/test/cuda-to-cv.jpg", nargs='?', help="filename of the output image to save")
 
 opt = parser.parse_args()
 
 
 # load the image into CUDA memory
-rgb_img = jetson.utils.loadImage(opt.file_in)
+rgb_img = loadImage(opt.file_in)
 
 print('RGB image: ')
 print(rgb_img)
 
 # convert to BGR, since that's what OpenCV expects
-bgr_img = jetson.utils.cudaAllocMapped(width=rgb_img.width,
-							    height=rgb_img.height,
-							    format='bgr8')
+bgr_img = cudaAllocMapped(width=rgb_img.width,
+                          height=rgb_img.height,
+						  format='bgr8')
 
-jetson.utils.cudaConvertColor(rgb_img, bgr_img)
+cudaConvertColor(rgb_img, bgr_img)
 
 print('BGR image: ')
 print(bgr_img)
 
 # make sure the GPU is done work before we convert to cv2
-jetson.utils.cudaDeviceSynchronize()
+cudaDeviceSynchronize()
 
 # convert to cv2 image (cv2 images are numpy arrays)
-cv_img = jetson.utils.cudaToNumpy(bgr_img)
+cv_img = cudaToNumpy(bgr_img)
 
 print('OpenCV image size: ' + str(cv_img.shape))
 print('OpenCV image type: ' + str(cv_img.dtype))

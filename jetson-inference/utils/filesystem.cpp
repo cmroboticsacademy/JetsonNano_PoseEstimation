@@ -27,6 +27,9 @@
 #include <sys/stat.h>
 #include <algorithm>
 #include <strings.h>
+#include <string>
+#include <fstream>
+#include <streambuf>
 #include <glob.h>
 
 #include "logging.h"
@@ -43,7 +46,7 @@ std::string absolutePath( const std::string& relative_path )
 			return relative_path;
 	}
 
-	return pathJoin(workingDirectory(), relative_path);
+	return pathJoin(Process::GetWorkingDir(), relative_path);
 }
 
 
@@ -63,7 +66,7 @@ std::string locateFile( const std::string& path, std::vector<std::string>& locat
 		return path;
 
 	// add standard search locations
-	locations.push_back(Process::ExecutableDirectory());
+	locations.push_back(Process::GetExecutableDir());
 
 	locations.push_back("/usr/local/bin/");
 	locations.push_back("/usr/local/");
@@ -84,6 +87,76 @@ std::string locateFile( const std::string& path, std::vector<std::string>& locat
 	}
 
 	return "";
+}
+
+
+// loadFile
+size_t loadFile( const std::string& path, void** bufferOut )
+{
+	// determine the file size
+	const size_t file_size = fileSize(path);
+
+	if( file_size == 0 )
+		return 0;
+	
+	// allocate memory to hold the file
+	void* buffer = (void*)malloc(file_size);
+
+	if( !buffer )
+	{
+		LogError("failed to allocate %zu bytes to read %s\n", file_size, path.c_str());
+		return 0;
+	}
+
+	// read the file
+	FILE* file = fopen(path.c_str(), "rb");
+
+	if( !file )
+	{
+		LogError("failed to open %s\n", path.c_str());
+		free(buffer);
+		return 0;
+	}
+
+	// read the serialized engine into memory
+	const size_t bytes_read = fread(buffer, 1, file_size, file);
+
+	if( bytes_read != file_size )
+	{
+		LogError("only read %zu of %zu bytes from %s\n", bytes_read, file_size, path.c_str());
+		free(buffer);
+		return 0;
+	}
+
+	fclose(file);
+
+	if( bufferOut != NULL )
+		*bufferOut = buffer;
+
+	return bytes_read;
+}
+
+
+// readFile
+std::string readFile( const std::string& path )
+{
+	// https://insanecoding.blogspot.com/2011/11/how-to-read-in-file-in-c.html
+	std::ifstream in(path, std::ios::in | std::ios::binary);
+
+	if( !in )
+	{
+		LogError("failed to find/open file %s\n", path.c_str());
+		return std::string();
+	}
+	
+	const std::string contents((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	
+	if( contents.length() == 0 )
+	{
+		LogWarning("file was empty - %s\n", path.c_str());
+	}
+	
+	return contents;
 }
 
 
@@ -122,7 +195,7 @@ bool listDir( const std::string& path_in, std::vector<std::string>& output, uint
 
 			// if nothing was found and a full path wasn't specified, try the exe path
 			if( firstChar != '.' && firstChar != '/' && firstChar != '\\' && firstChar != '*' && firstChar != '?' && firstChar != '~' )
-				return listDir(pathJoin(Process::ExecutableDirectory(), path), output, mask);
+				return listDir(pathJoin(Process::GetExecutableDir(), path), output, mask);
 			else
 				LogError("listDir('%s') - found no matches\n", path.c_str());
 		}
@@ -238,15 +311,45 @@ size_t fileSize( const std::string& path )
 }
 
 
-// pathDir
-std::string pathDir( const std::string& filename )
+// splitPath
+std::pair<std::string, std::string> splitPath( const std::string& path )
 {
-	const std::string::size_type slashIdx = filename.find_last_of("/");
+	const std::string::size_type slashIdx = path.find_last_of("/");
+	const std::string ext = fileExtension(path);
+	
+	if( slashIdx == std::string::npos )
+	{
+		if( ext.length() > 0 )
+			return std::pair<std::string, std::string>("", path);
+		else
+			return std::pair<std::string, std::string>(path, "");
+	}
+	
+	return std::pair<std::string, std::string>(path.substr(0, slashIdx + 1), path.substr(slashIdx + 1));
+}
+
+
+// pathFilename
+std::string pathFilename( const std::string& path )
+{
+	const std::string::size_type slashIdx = path.find_last_of("/");
+	
+	if( slashIdx == std::string::npos )
+		return path;
+	
+	return path.substr(slashIdx + 1);
+}
+
+
+// pathDir
+std::string pathDir( const std::string& path )
+{
+	const std::string::size_type slashIdx = path.find_last_of("/");
 
 	if( slashIdx == std::string::npos || slashIdx == 0 )
-		return filename;
+		return path;
 
-	return filename.substr(0, slashIdx + 1);
+	return path.substr(0, slashIdx + 1);
 }
 
 
@@ -360,26 +463,4 @@ std::string fileChangeExtension(const std::string& filename, const std::string& 
 {
 	return fileRemoveExtension(filename).append(newExtension);
 }
-
-
-// processPath
-std::string processPath()
-{
-	return Process::ExecutablePath();
-}
-
-
-// processDirectory
-std::string processDirectory()
-{
-	return Process::ExecutableDirectory();
-}
-
-
-// workingDirectory
-std::string workingDirectory()
-{
-	return Process::WorkingDirectory();
-}
-
 

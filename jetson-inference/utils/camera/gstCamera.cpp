@@ -21,20 +21,18 @@
  */
 
 #include "gstCamera.h"
-#include "gstUtility.h"
 
-#include <gst/gst.h>
+#include "cudaColorspace.h"
+#include "filesystem.h"
+#include "logging.h"
+#include "NvInfer.h"
+
 #include <gst/app/gstappsink.h>
 
 #include <sstream> 
 #include <unistd.h>
 #include <string.h>
-
-#include "cudaColorspace.h"
-#include "filesystem.h"
-#include "logging.h"
-
-#include "NvInfer.h"
+#include <math.h>
 
 
 // constructor
@@ -84,11 +82,12 @@ gstCamera* gstCamera::Create( uint32_t width, uint32_t height, const char* camer
 	if( !camera )
 		camera = "csi://0";
 
-	opt.resource = camera;
-	opt.width    = width;
-	opt.height   = height;
-	opt.ioType   = videoOptions::INPUT;
-
+	opt.resource   = camera;
+	opt.width      = width;
+	opt.height     = height;
+	opt.ioType     = videoOptions::INPUT;
+	opt.deviceType = videoOptions::DeviceTypeFromStr(opt.resource.protocol.c_str());
+	
 	return Create(opt);
 }
 
@@ -132,8 +131,25 @@ bool gstCamera::buildLaunchStr()
 {
 	std::ostringstream ss;
 
+	#if defined(ENABLE_NVMM)
+		const bool enable_nvmm = true;
+	#else
+		const bool enable_nvmm = false;
+	#endif
+	
+	if( mOptions.save.path.length() > 0 && (mOptions.codec == videoOptions::CODEC_RAW || mOptions.codec == videoOptions::CODEC_UNKNOWN) )
+	{
+		LogError(LOG_GSTREAMER "can't use the --input-save option on a raw/uncompressed input stream\n");
+		return false;
+	}
+
 	if( mOptions.resource.protocol == "csi" )
 	{
+	#if defined(__x86_64__) || defined(__amd64__)
+		LogError(LOG_GSTREAMER "MIPI CSI camera isn't available on x86 - please use /dev/video (V4L2) instead");
+		return false;
+	#endif
+	
 	#if NV_TENSORRT_MAJOR > 4
 		// on newer JetPack's, it's common for CSI camera to need flipped
 		// so here we reverse FLIP_NONE with FLIP_ROTATE_180
@@ -147,18 +163,13 @@ bool gstCamera::buildLaunchStr()
 		// older JetPack versions use nvcamerasrc element instead of nvarguscamerasrc
 		ss << "nvcamerasrc fpsRange=\"" << (int)mOptions.frameRate << " " << (int)mOptions.frameRate << "\" ! video/x-raw(memory:NVMM), width=(int)" << GetWidth() << ", height=(int)" << GetHeight() << ", format=(string)NV12 ! nvvidconv flip-method=" << mOptions.flipMethod << " ! "; //'video/x-raw(memory:NVMM), width=(int)1920, height=(int)1080, format=(string)I420, framerate=(fraction)30/1' ! ";
 	#endif
-		
-	#ifndef DISABLE_NVMM
-		ss << "video/x-raw(memory:NVMM) ! ";
-	#else
-		ss << "video/x-raw ! ";
-	#endif
 	
+		ss << (enable_nvmm ? "video/x-raw(memory:NVMM) ! " : "video/x-raw ! "); 
 		ss << "appsink name=mysink";
 	}
 	else
 	{
-		ss << "v4l2src device=" << mOptions.resource.location << " ! ";
+		ss << "v4l2src device=" << mOptions.resource.location << " do-timestamp=true ! ";
 		
 		if( mOptions.codec != videoOptions::CODEC_UNKNOWN )
 		{
@@ -167,33 +178,81 @@ bool gstCamera::buildLaunchStr()
 			if( mOptions.codec == videoOptions::CODEC_RAW )
 				ss << "format=(string)" << gst_format_to_string(mFormatYUV) << ", ";
 			
-			ss << "width=(int)" << GetWidth() << ", height=(int)" << GetHeight() << " ! "; 
+			ss << "width=(int)" << GetWidth() << ", height=(int)" << GetHeight() << ", framerate=" << (int)mOptions.frameRate << "/1 ! "; 
 		}
 		
 		//ss << "queue max-size-buffers=16 ! ";
 
-	#ifndef DISABLE_NVMM
-		const char* format = "video/x-raw(memory:NVMM) ! ";
-	#else
-		const char* format = "video/x-raw ! ";
-	#endif
-	
-		if( mOptions.codec == videoOptions::CODEC_H264 )
-			ss << "h264parse ! omxh264dec ! " << format;
-		else if( mOptions.codec == videoOptions::CODEC_H265 )
-			ss << "h265parse ! omxh265dec ! " << format;
-		else if( mOptions.codec == videoOptions::CODEC_VP8 )
-			ss << "omxvp8dec ! video/x-raw ! " << format;
-		else if( mOptions.codec == videoOptions::CODEC_VP9 )
-			ss << "omxvp9dec ! video/x-raw ! " << format;
-		else if( mOptions.codec == videoOptions::CODEC_MPEG2 )
-			ss << "mpegvideoparse ! omxmpeg2videodec ! " << format;
-		else if( mOptions.codec == videoOptions::CODEC_MPEG4 )
-			ss << "mpeg4videoparse ! omxmpeg4videodec ! " << format;
-		else if( mOptions.codec == videoOptions::CODEC_MJPEG )
-			ss << "jpegdec ! video/x-raw ! "; //ss << "nvjpegdec ! video/x-raw ! "; //ss << "jpegparse ! nvv4l2decoder mjpeg=1 ! video/x-raw(memory:NVMM) ! nvvidconv ! video/x-raw ! "; //
+		if( mOptions.save.path.length() > 0 )
+		{
+			ss << "tee name=savetee savetee. ! queue ! ";
+			
+			if( !gst_build_filesink(mOptions.save, mOptions.codec, ss) )
+				return false;
 
-		ss << "appsink name=mysink";
+			ss << "savetee. ! queue ! ";
+		}
+	
+		// select the decoder
+		const char* decoder = gst_select_decoder(mOptions.codec, mOptions.codecType);
+		
+		if( !decoder && mOptions.codec != videoOptions::CODEC_RAW )
+		{
+			LogError(LOG_GSTREAMER "gstCamera -- unsupported codec requested (%s)\n", videoOptions::CodecToStr(mOptions.codec));
+			LogError(LOG_GSTREAMER "             supported decoder codecs are:\n");
+			LogError(LOG_GSTREAMER "                * h264\n");
+			LogError(LOG_GSTREAMER "                * h265\n");
+			LogError(LOG_GSTREAMER "                * vp8\n");
+			LogError(LOG_GSTREAMER "                * vp9\n");
+			LogError(LOG_GSTREAMER "                * mpeg2\n");
+			LogError(LOG_GSTREAMER "                * mpeg4\n");
+			LogError(LOG_GSTREAMER "                * mjpeg\n");
+			
+			return false;
+		}
+
+		if( mOptions.codec != videoOptions::CODEC_RAW )
+		{
+			if( mOptions.codecType != videoOptions::CODEC_V4L2 )
+			{
+				if( mOptions.codec == videoOptions::CODEC_H264 )
+					ss << "h264parse ! ";  
+				else if( mOptions.codec == videoOptions::CODEC_H265 )
+					ss << "h265parse ! ";
+				else if( mOptions.codec == videoOptions::CODEC_MPEG2 )
+					ss << "mpegvideoparse ! ";
+				else if( mOptions.codec == videoOptions::CODEC_MPEG4 )
+					ss << "mpeg4videoparse ! ";
+			}
+
+			ss << decoder << " name=decoder ";  //ss << "nvjpegdec ! video/x-raw ! "; //ss << "jpegparse ! nvv4l2decoder mjpeg=1 ! video/x-raw(memory:NVMM) ! nvvidconv ! video/x-raw ! "; //
+	
+			if( mOptions.codecType == videoOptions::CODEC_V4L2 && mOptions.codec != videoOptions::CODEC_MJPEG )
+				ss << "enable-max-performance=1 ";
+			
+			ss << "! ";
+	
+			if( (enable_nvmm && mOptions.codecType != videoOptions::CODEC_CPU) || mOptions.codecType == videoOptions::CODEC_V4L2 )
+				ss << "video/x-raw(memory:NVMM) ! ";  // V4L2 codecs can only output NVMM
+			else
+				ss << "video/x-raw ! ";
+		}
+
+	#if defined(__aarch64__)
+		// video flipping/rotating for V4L2 devices (use nvvidconv if a hw codec is used for decode)
+		// V4L2 decoders can only output NVMM memory, if we aren't using NVMM have nvvidconv convert it 
+		if( mOptions.flipMethod != videoOptions::FLIP_NONE || (mOptions.codecType == videoOptions::CODEC_V4L2 && !enable_nvmm) )
+		{
+			if( (enable_nvmm && mOptions.codecType != videoOptions::CODEC_CPU) || mOptions.codecType == videoOptions::CODEC_V4L2 )
+				ss << "nvvidconv flip-method=" << mOptions.flipMethod << " ! " << (enable_nvmm ? "video/x-raw(memory:NVMM) ! " : "video/x-raw ! ");
+			else
+				ss << "videoflip method=" << videoOptions::FlipMethodToStr(mOptions.flipMethod) << " ! ";  // the videoflip enum varies slightly, but the strings are the same
+		}
+	#elif defined(__x86_64__) || defined(__amd64__)
+		if( mOptions.flipMethod != videoOptions::FLIP_NONE )
+			ss << "videoflip method=" << videoOptions::FlipMethodToStr(mOptions.flipMethod) << " ! ";
+	#endif
+		ss << "appsink name=mysink sync=false";
 	}
 	
 	mLaunchStr = ss.str();
@@ -206,9 +265,10 @@ bool gstCamera::buildLaunchStr()
 
 
 // printCaps
-bool gstCamera::printCaps( GstCaps* device_caps )
+bool gstCamera::printCaps( GstCaps* device_caps ) const
 {
 	const uint32_t numCaps = gst_caps_get_size(device_caps);
+	
 	LogVerbose(LOG_GSTREAMER "gstCamera -- found %u caps for v4l2 device %s\n", numCaps, mOptions.resource.location.c_str());
 
 	if( numCaps == 0 )
@@ -228,8 +288,47 @@ bool gstCamera::printCaps( GstCaps* device_caps )
 }
 
 
+// pick the closest framerate
+float gstCamera::findFramerate( const std::vector<float>& frameRates, float frameRate ) const
+{
+	const uint32_t numRates = frameRates.size();
+	
+	if( numRates == 0 )
+		return frameRate;
+	
+	float bestRate = 0.0f;
+	float bestDiff = 10000.0f;
+	
+	for( uint32_t n=0; n < numRates; n++ )
+	{
+		const float diff = fabsf(frameRates[n] - frameRate);
+		
+		if( diff < bestDiff )
+		{
+			bestRate = frameRates[n];
+			bestDiff = diff;
+		}
+	}
+	
+	return bestRate;
+}
+
+
 // parseCaps
-bool gstCamera::parseCaps( GstStructure* caps, videoOptions::Codec* _codec, imageFormat* _format, uint32_t* _width, uint32_t* _height, float* _frameRate )
+bool gstCamera::parseCaps( GstStructure* caps, videoOptions::Codec* _codec, imageFormat* _format, uint32_t* _width, uint32_t* _height, float* _frameRate ) const
+{
+	std::vector<float> frameRates;
+	
+	if( !parseCaps(caps, _codec, _format, _width, _height, frameRates) )
+		return false;
+	
+	*_frameRate = findFramerate(frameRates, *_frameRate);
+	return true;
+}
+
+
+// parseCaps
+bool gstCamera::parseCaps( GstStructure* caps, videoOptions::Codec* _codec, imageFormat* _format, uint32_t* _width, uint32_t* _height, std::vector<float>& frameRates ) const
 {
 	// parse codec/format
 	const videoOptions::Codec codec = gst_parse_codec(caps);
@@ -249,24 +348,19 @@ bool gstCamera::parseCaps( GstStructure* caps, videoOptions::Codec* _codec, imag
 	int width  = 0;
 	int height = 0;
 	
-	if( !gst_structure_get_int(caps, "width", &width) ||
-		!gst_structure_get_int(caps, "height", &height) )
-	{
+	if( !gst_structure_get_int(caps, "width", &width) || !gst_structure_get_int(caps, "height", &height) )
 		return false;
-	}
-	
+
 	// get highest framerate
-	float frameRate = 0;
 	int frameRateNum = 0;
 	int frameRateDenom = 0;
 	
 	if( gst_structure_get_fraction(caps, "framerate", &frameRateNum, &frameRateDenom) )
 	{
-		frameRate = float(frameRateNum) / float(frameRateDenom);
+		frameRates.push_back(float(frameRateNum) / float(frameRateDenom));
 	}
 	else
 	{
-		// it's a list of framerates, pick the max
 		GValueArray* frameRateList = NULL;
 
 		if( gst_structure_get_list(caps, "framerate", &frameRateList) && frameRateList->n_values > 0 )
@@ -281,25 +375,19 @@ bool gstCamera::parseCaps( GstStructure* caps, videoOptions::Codec* _codec, imag
 					frameRateDenom = gst_value_get_fraction_denominator(value);
 
 					if( frameRateNum > 0 && frameRateDenom > 0 )
-					{
-						const float rate = float(frameRateNum) / float(frameRateDenom);
-		
-						if( rate > frameRate )
-							frameRate = rate;
-					}
+						frameRates.push_back(float(frameRateNum) / float(frameRateDenom));
 				}
 			}
 		}
 	}
 	
-	if( frameRate <= 0.0f )
+	if( frameRates.size() == 0 )
 		LogWarning(LOG_GSTREAMER "gstCamera -- missing framerate in caps, ignoring\n");
 
 	*_codec     = codec;
 	*_format    = format;
 	*_width     = width;
 	*_height    = height;
-	*_frameRate = frameRate;
 
 	return true;
 }
@@ -311,8 +399,9 @@ bool gstCamera::matchCaps( GstCaps* device_caps )
 	const uint32_t numCaps = gst_caps_get_size(device_caps);
 	GstStructure* bestCaps = NULL;
 
-	int   bestResolution = 1000000;
+	int bestResolution = 1000000;
 	float bestFrameRate = 0.0f;
+	
 	videoOptions::Codec bestCodec = videoOptions::CODEC_UNKNOWN;
 
 	for( uint32_t n=0; n < numCaps; n++ )
@@ -325,7 +414,7 @@ bool gstCamera::matchCaps( GstCaps* device_caps )
 		videoOptions::Codec codec;
 		imageFormat format;
 		uint32_t width, height;
-		float frameRate;
+		float frameRate = mOptions.frameRate;
 
 		if( !parseCaps(caps, &codec, &format, &width, &height, &frameRate) )
 			continue;
@@ -341,9 +430,6 @@ bool gstCamera::matchCaps( GstCaps* device_caps )
 			bestCodec = codec;
 			bestCaps = caps;
 		}
-		
-		//if( resolutionDiff == 0 )
-		//	break;
 	}
 		
 	if( !bestCaps )
@@ -371,7 +457,7 @@ bool gstCamera::discover()
 	
 	if( mOptions.frameRate <= 0 )
 		mOptions.frameRate = 30;
-
+	
 	// MIPI CSI cameras aren't enumerated
 	if( mOptions.resource.protocol != "v4l2" )
 	{
@@ -403,8 +489,17 @@ bool gstCamera::discover()
 	for( GList* n=deviceList; n; n = n->next )
 	{
 		GstDevice* d = GST_DEVICE(n->data);
-		LogVerbose(LOG_GSTREAMER "gstCamera -- found v4l2 device: %s\n", gst_device_get_display_name(d));
 		
+		const char* deviceName = gst_device_get_display_name(d);
+		
+		LogVerbose(LOG_GSTREAMER "gstCamera -- found v4l2 device: %s\n", deviceName);
+	
+	#if NV_TENSORRT_MAJOR > 8 || (NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR >= 4)
+		// on JetPack >= 5.0.1, the newer Logitech C920's send a H264 stream that nvv4l2decoder has trouble decoding, so change it to MJPEG
+		if( strcmp(deviceName, "HD Pro Webcam C920") == 0 && mOptions.codecType == videoOptions::CODEC_V4L2 && mOptions.codec == videoOptions::CODEC_UNKNOWN )
+			mOptions.codec = videoOptions::CODEC_MJPEG;
+	#endif
+	
 		GstStructure* properties = gst_device_get_properties(d);
 		
 		if( properties != NULL )
@@ -442,7 +537,7 @@ bool gstCamera::discover()
 	if( !matchCaps(device_caps) )
 		return false;
 	
-	LogVerbose(LOG_GSTREAMER "gstCamera -- selected device profile:  codec=%s format=%s width=%u height=%u\n", videoOptions::CodecToStr(mOptions.codec), imageFormatToStr(mFormatYUV), GetWidth(), GetHeight());
+	LogVerbose(LOG_GSTREAMER "gstCamera -- selected device profile:  codec=%s format=%s width=%u height=%u framerate=%u\n", videoOptions::CodecToStr(mOptions.codec), imageFormatToStr(mFormatYUV), GetWidth(), GetHeight(), GetFrameRate());
 	
 	return true;
 }
@@ -532,12 +627,6 @@ bool gstCamera::init()
 	// disable looping for cameras
 	mOptions.loop = 0;	
 
-	// set device flags
-	if( mOptions.resource.protocol == "csi" )
-		mOptions.deviceType = videoOptions::DEVICE_CSI;
-	else if( mOptions.resource.protocol == "v4l2" )
-		mOptions.deviceType = videoOptions::DEVICE_V4L2;
-
 	return true;
 }
 
@@ -567,6 +656,7 @@ GstFlowReturn gstCamera::onBuffer(_GstAppSink* sink, void* user_data)
 	
 	dec->checkBuffer();
 	dec->checkMsgBus();
+	
 	return GST_FLOW_OK;
 }
 	
@@ -606,35 +696,53 @@ void gstCamera::checkBuffer()
 		release_return;
 	}
 
+	// enqueue the buffer for color conversion
 	if( !mBufferManager->Enqueue(gstBuffer, gstCaps) )
+	{
 		LogError(LOG_GSTREAMER "gstCamera -- failed to handle incoming buffer\n");
+		release_return;
+	}
 	
+	mOptions.frameCount++;
 	release_return;
 }
 
 
+#define RETURN_STATUS(code)  { if( status != NULL ) { *status=(code); } return ((code) == videoSource::OK ? true : false); }
+
+
 // Capture
-bool gstCamera::Capture( void** output, imageFormat format, uint64_t timeout )
+bool gstCamera::Capture( void** output, imageFormat format, uint64_t timeout, int* status )
 {
 	// verify the output pointer exists
 	if( !output )
-		return false;
+		RETURN_STATUS(ERROR);
 
 	// confirm the camera is streaming
 	if( !mStreaming )
 	{
 		if( !Open() )
-			return false;
+			RETURN_STATUS(ERROR);
 	}
 
 	// wait until a new frame is recieved
-	if( !mBufferManager->Dequeue(output, format, timeout) )
-	{
-		LogError(LOG_GSTREAMER "gstDecoder -- failed to retrieve next image buffer\n");
-		return false;
-	}
+	const int result = mBufferManager->Dequeue(output, format, timeout);
 	
-	return true;
+	if( result < 0 )
+	{
+		LogError(LOG_GSTREAMER "gstCamera::Capture() -- an error occurred retrieving the next image buffer\n");
+		RETURN_STATUS(ERROR);
+	}
+	else if( result == 0 )
+	{
+		LogWarning(LOG_GSTREAMER "gstCamera::Capture() -- a timeout occurred waiting for the next image buffer\n");
+		RETURN_STATUS(TIMEOUT);
+	}
+
+	mLastTimestamp = mBufferManager->GetLastTimestamp();
+	mRawFormat = mBufferManager->GetRawFormat();
+
+	RETURN_STATUS(OK);
 }
 
 // CaptureRGBA

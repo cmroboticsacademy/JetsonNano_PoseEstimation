@@ -66,10 +66,7 @@ static int PyDisplay_Init( PyDisplay_Object* self, PyObject *args, PyObject *kwd
 	static char* kwlist[] = {"title", "width", "height", "r", "g", "b", "a", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "|siiffff", kwlist, &title, &width, &height, &bg_color[0], &bg_color[1], &bg_color[2], &bg_color[3]))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_UTILS "glDisplay.__init()__ failed to parse args tuple");
 		return -1;
-	}
   
 	// create the display object
 	glDisplay* display = glDisplay::Create(title, width, height, bg_color[0], bg_color[1], bg_color[2], bg_color[3]);
@@ -116,10 +113,7 @@ static PyObject* PyDisplay_BeginRender( PyDisplay_Object* self, PyObject* args, 
 	static char* kwlist[] = {"userEvents", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "|i", kwlist, &userEvents))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_UTILS "glDisplay.BeginRender() failed to parse args tuple");
 		return NULL;
-	}
 
 	self->display->BeginRender( userEvents > 0 ? true : false );
 	Py_RETURN_NONE; 
@@ -163,10 +157,7 @@ static PyObject* PyDisplay_Render( PyDisplay_Object* self, PyObject* args, PyObj
 	static char* kwlist[] = {"image", "width", "height", "x", "y", "normalize", "format", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "O|iiffis", kwlist, &capsule, &width, &height, &x, &y, &norm, &format_str))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_UTILS "glDisplay.Render() failed to parse args tuple");
 		return NULL;
-	}
 
 	// parse format string
 	imageFormat format = imageFormatFromStr(format_str);
@@ -208,10 +199,7 @@ static PyObject* PyDisplay_RenderOnce( PyDisplay_Object* self, PyObject* args, P
 	static char* kwlist[] = {"image", "width", "height", "x", "y", "normalize", "format", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "O|iiffis", kwlist, &capsule, &width, &height, &x, &y, &norm))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_UTILS "glDisplay.RenderOnce() failed to parse args tuple");
 		return NULL;
-	}
 
 	// parse format string
 	imageFormat format = imageFormatFromStr(format_str);
@@ -243,10 +231,7 @@ static PyObject* PyDisplay_SetTitle( PyDisplay_Object* self, PyObject* args )
 	const char* title = NULL;
 
 	if( !PyArg_ParseTuple(args, "s", &title) )
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_UTILS "glDisplay.SetTitle() failed to parse args tuple");
 		return NULL;
-	}
 
 	if( title != NULL )
 		self->display->SetTitle(title);
@@ -269,10 +254,7 @@ static PyObject* PyDisplay_SetBackgroundColor( PyDisplay_Object* self, PyObject*
 	static char* kwlist[] = {"r", "g", "b", "a", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "|ffff", kwlist, &bg_color[0], &bg_color[1], &bg_color[2], &bg_color[3]))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_UTILS "glDisplay.SetBackgroundColor() failed to parse args tuple");
 		return NULL;
-	}
 
 	self->display->SetBackgroundColor(bg_color[0], bg_color[1], bg_color[2], bg_color[3]);
 	Py_RETURN_NONE;
@@ -344,6 +326,72 @@ static PyObject* PyDisplay_IsClosed( PyDisplay_Object* self )
 }
 
 
+// IsMaximized
+static PyObject* PyDisplay_IsMaximized( PyDisplay_Object* self )
+{
+	if( !self || !self->display )
+	{
+		PyErr_SetString(PyExc_Exception, LOG_PY_UTILS "glDisplay invalid object instance");
+		return NULL;
+	}
+
+	PY_RETURN_BOOL(self->display->IsMaximized());
+}
+
+
+// SetMaximized
+static PyObject* PyDisplay_SetMaximized( PyDisplay_Object* self, PyObject* args )
+{
+	if( !self || !self->display )
+	{
+		PyErr_SetString(PyExc_Exception, LOG_PY_UTILS "glDisplay invalid object instance");
+		return NULL;
+	}
+
+	// parse arguments
+	int value = 0;
+
+	if( !PyArg_ParseTuple(args, "p", &value) )
+		return NULL;
+
+	self->display->SetMaximized(value > 0);
+	Py_RETURN_NONE;
+}
+
+
+// IsFullscreen
+static PyObject* PyDisplay_IsFullscreen( PyDisplay_Object* self )
+{
+	if( !self || !self->display )
+	{
+		PyErr_SetString(PyExc_Exception, LOG_PY_UTILS "glDisplay invalid object instance");
+		return NULL;
+	}
+
+	PY_RETURN_BOOL(self->display->IsFullscreen());
+}
+
+
+// SetFullscreen
+static PyObject* PyDisplay_SetFullscreen( PyDisplay_Object* self, PyObject* args )
+{
+	if( !self || !self->display )
+	{
+		PyErr_SetString(PyExc_Exception, LOG_PY_UTILS "glDisplay invalid object instance");
+		return NULL;
+	}
+
+	// parse arguments
+	int value = 0;
+
+	if( !PyArg_ParseTuple(args, "p", &value) )
+		return NULL;
+
+	self->display->SetFullscreen(value > 0);
+	Py_RETURN_NONE;
+}
+
+
 // ProcessEvents
 static PyObject* PyDisplay_ProcessEvents( PyDisplay_Object* self )
 {
@@ -376,6 +424,10 @@ static PyMethodDef PyDisplay_Methods[] =
 	{ "GetHeight", (PyCFunction)PyDisplay_GetHeight, METH_NOARGS, "Return the height of the window (in pixels)"},
 	{ "IsOpen", (PyCFunction)PyDisplay_IsOpen, METH_NOARGS, "Returns true if the window is open"},
 	{ "IsClosed", (PyCFunction)PyDisplay_IsClosed, METH_NOARGS, "Returns true if the window has been closed"},
+	{ "IsMaximized", (PyCFunction)PyDisplay_IsMaximized, METH_NOARGS, "Returns true if the window is maximized"},
+	{ "SetMaximized", (PyCFunction)PyDisplay_SetMaximized, METH_VARARGS, "Sets the window to maximized/unmaximized based on bool argument"},
+	{ "IsFullscreen", (PyCFunction)PyDisplay_IsFullscreen, METH_NOARGS, "Returns true if the window is fullscreen"},
+	{ "SetFullscreen", (PyCFunction)PyDisplay_SetFullscreen, METH_VARARGS, "Sets the window to fullscreen mode based on bool argument"},
 	{ "SetBackgroundColor", (PyCFunction)PyDisplay_SetBackgroundColor, METH_VARARGS|METH_KEYWORDS, "Set the window background color"},
 	{ "SetTitle", (PyCFunction)PyDisplay_SetTitle, METH_VARARGS, "Set the window title string"},
 	{ "ProcessEvents", (PyCFunction)PyDisplay_ProcessEvents, METH_NOARGS, "Process UI events"},

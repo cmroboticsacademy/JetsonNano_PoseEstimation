@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 #
 # Copyright (c) 2019, NVIDIA CORPORATION. All rights reserved.
 #
@@ -21,9 +21,10 @@
 # DEALINGS IN THE SOFTWARE.
 #
 
-import jetson.utils
 import argparse
 import numpy as np
+
+from jetson_utils import cudaFromNumpy, saveImageRGBA
 
 # parse the command line
 parser = argparse.ArgumentParser(description='Copy a test image from numpy to CUDA and save it to disk')
@@ -32,7 +33,7 @@ parser.add_argument("--width", type=int, default=512, help="width of the array (
 parser.add_argument("--height", type=int, default=256, help="height of the array (in pixels)")
 parser.add_argument("--depth", type=int, default=4, help="number of color channels in the array (1, 3, or 4)")
 parser.add_argument("--dtype", type=str, default="float32", help="numpy data type: " + " | ".join(sorted({str(key) for key in np.sctypeDict.keys()})))
-parser.add_argument("--filename", type=str, default="cuda-from-numpy.jpg", help="filename of the output test image")
+parser.add_argument("--filename", type=str, default="images/test/cuda-from-numpy.jpg", help="filename of the output test image")
 
 opt = parser.parse_args()
 
@@ -56,10 +57,10 @@ for y in range(opt.height):
 		array[y, x] = px
 
 # copy to CUDA memory
-cuda_mem = jetson.utils.cudaFromNumpy(array)
+cuda_mem = cudaFromNumpy(array)
 print(cuda_mem)
 
 # save as image
-jetson.utils.saveImageRGBA(opt.filename, cuda_mem, opt.width, opt.height)
+saveImageRGBA(opt.filename, cuda_mem, opt.width, opt.height)
 print("saved {:d}x{:d} test image to '{:s}'".format(opt.width, opt.height, opt.filename))
 

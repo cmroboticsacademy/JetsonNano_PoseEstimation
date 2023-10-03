@@ -61,7 +61,11 @@ imageWriter::imageWriter( const videoOptions& options ) : videoOutput(options)
 	mFileCount = 0;
 	mStreaming = true;
 
-	mOptions.deviceType = videoOptions::DEVICE_FILE;
+	// replace wildcards with %i
+	const size_t wildcard = mOptions.resource.location.find("*");
+	
+	if( wildcard != std::string::npos )
+		mOptions.resource.location.replace(wildcard, 1, "%i");
 }
 
 
@@ -111,7 +115,7 @@ bool imageWriter::Render( void* image, uint32_t width, uint32_t height, imageFor
 		strcpy(mFileOut, mOptions.resource.location.c_str());
 	}
 
-	CUDA(cudaDeviceSynchronize());
+	//CUDA(cudaDeviceSynchronize());   // now done in saveImage()
 	
 	// save the image
 	if( !saveImage(mFileOut, image, width, height, format) )
