@@ -74,7 +74,7 @@ def process_tags(detector, K, s, results, image, visualize=True):
     	    cv2.putText(image, tagFamily, (ptA[0], ptA[1] - 15),
     		cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-        print("[INFO] tag family: {}".format(tagFamily))
+        #print("[INFO] tag family: {}".format(tagFamily)) # If you want to print the tag family it's seeing
     return image, poses_msg
 
 def params_callback(msg):

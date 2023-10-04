@@ -15,6 +15,7 @@ def pose_callback(msg):
     global visited, turn_flag
     move = 0.0
     stop = 1.0
+    speed = 0.17
     # TODO: estimate control actions
     cmd_msg = Float32MultiArray()
     pose_mat = np.array(msg.pose.matrix)
@@ -46,12 +47,30 @@ def pose_callback(msg):
             speed_r = forward - diff
             cmd_msg.data = [move, speed_l, speed_r]
     '''
-    if tag_id == 0:
-        print("I SEE 0!!")
-        cmd_msg.data = [stop, 0, 0]
+    if tag_id == 3:
+        print("I SEE 3!!")
+        x_left_bound = -0.06
+        x_right_bound = -0.01
+        
+        if relative_x >= x_left_bound and relative_x <= x_right_bound:
+            print("Centered")
+            if relative_y > 0.08:
+                print("Moving closer...")
+                cmd_msg.data = [move, speed, speed]
+            else:
+                print("Stopped")
+                cmd_msg.data = [stop, 0, 0]
+        
+        elif relative_x > x_left_bound:
+            print("Adjusting to the left...")
+            cmd_msg.data = [move, -speed, speed]
+            
+        elif relative_x < x_right_bound:
+            print("Adjusting to the right...")
+            cmd_msg.data = [move, speed, -speed]
     else:
-        print("I see nussing")
-        cmd_msg.data = [move, -0.2, 0]
+        print("Searching for Apriltag (clockwise)...")
+        cmd_msg.data = [move, speed, -speed]
     
     ctrl_pub.publish(cmd_msg)
 
