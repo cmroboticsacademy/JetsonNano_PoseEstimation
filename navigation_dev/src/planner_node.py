@@ -48,7 +48,20 @@ def pose_callback(msg):
     '''
     if tag_id == 0:
         print("I SEE 0!!")
-        cmd_msg.data = [stop, 0, 0]
+        if relative_y < 0.5:
+            diff = 0.2
+            print('turning!!!')
+            if turn_flag:
+                cmd_msg.data = [move, 0, diff]
+            else:
+                cmd_msg.data = [stop, 0, 0]
+            turn_flag = not turn_flag
+        else:
+            diff = relative_x * 0.1
+            forward = min(0.4, relative_y * 0.3)
+            speed_l = forward + diff
+            speed_r = forward - diff
+            cmd_msg.data = [move, speed_l, speed_r]
     else:
         print("I see nussing")
         cmd_msg.data = [move, -0.2, 0]
