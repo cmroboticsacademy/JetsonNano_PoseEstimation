@@ -12,10 +12,14 @@ ctrl_pub = rospy.Publisher('/ctrl_cmd', Float32MultiArray, queue_size=2)
 
 
 def pose_callback(msg):
-    global visited, turn_flag
+    global target_id
+    target_id = -1
+    tags_array = [0,1,2,3] 
+    visited_tags = []
     move = 0.0
     stop = 1.0
     speed = 0.17
+    
     # TODO: estimate control actions
     cmd_msg = Float32MultiArray()
     pose_mat = np.array(msg.pose.matrix)
@@ -23,32 +27,11 @@ def pose_callback(msg):
     
     print(relative_x, relative_y, tag_id)
     
-    '''
-    if tag_id == 42:
-        visited = True
-    if visited and tag_id == 0:  # if we have seen 0 before and see it again, we back to origin
-        if relative_x < -0.2:
-            cmd_msg.data = [move, -0.2, 0]
-        else:
-            cmd_msg.data = [stop, 0, 0]
-    else:
-        if relative_y < 0.5:
-            diff = 0.2
-            print('turning!!!')
-            if turn_flag:
-                cmd_msg.data = [move, 0, diff]
-            else:
-                cmd_msg.data = [stop, 0, 0]
-            turn_flag = not turn_flag
-        else:
-            diff = relative_x * 0.1
-            forward = min(0.4, relative_y * 0.3)
-            speed_l = forward + diff
-            speed_r = forward - diff
-            cmd_msg.data = [move, speed_l, speed_r]
-    '''
-    if tag_id == 3:
-        print("I SEE 3!!")
+    if tag_id in tags_array and target_id != -1:
+        print("Tag ID: {} found.".format(tag_id))
+        target_id = tag_id
+        
+    if target_id: 
         x_left_bound = -0.06
         x_right_bound = -0.01
         
@@ -60,6 +43,7 @@ def pose_callback(msg):
             else:
                 print("Stopped")
                 cmd_msg.data = [stop, 0, 0]
+                visited_tags.append(target_id)
         
         elif relative_x > x_left_bound:
             print("Adjusting to the left...")
@@ -69,7 +53,6 @@ def pose_callback(msg):
             print("Adjusting to the right...")
             cmd_msg.data = [move, speed, -speed]
     else:
-        print("Searching for Apriltag (clockwise)...")
         cmd_msg.data = [move, speed, -speed]
     
     ctrl_pub.publish(cmd_msg)
