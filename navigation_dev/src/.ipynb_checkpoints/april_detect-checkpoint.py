@@ -113,7 +113,7 @@ def cam_callback(msg):
     img_dets, tfs = process_tags(detector, K_params, s, results, img_np)
     #tfs.header.stamp = msg.header.stamp
     tfs.header.stamp = rospy.Time.now() 
-    img = bridge.cv2_to_imgmsg(img_dets) 
+    img = bridge.cv2_to_imgmsg(img_dets, 'bgr8') 
     april_pub.publish(img)
     poses_pub.publish(tfs)
 
