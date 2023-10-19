@@ -26,16 +26,18 @@ def pose_callback(msg):
     
     print("tag_id: {}".format(tag_id))
     
-    if tag_id == 1: 
-        if relative_y > 0.28:
-            print("Moving closer...")
-            cmd_msg.data = [move, speed, speed]
+    if debugging == False:
+        if tag_id == 1: 
+            if relative_y > 0.28:
+                print("Moving closer...")
+                cmd_msg.data = [move, speed, speed]
+            else:
+                print("Stopped")
+                cmd_msg.data = [stop, 0, 0]
         else:
-            print("Stopped")
             cmd_msg.data = [stop, 0, 0]
     else:
         cmd_msg.data = [stop, 0, 0]
-        ctrl_pub.publish(cmd_msg)
     
     ctrl_pub.publish(cmd_msg)
 
@@ -46,6 +48,7 @@ if __name__ == "__main__":
     target_id = -1
     tags_array = [0.0,1.0,2.0,3.0] 
     visited_tags = []
+    debugging = True
     rospy.init_node('planner_node')
     rospy.Subscriber("/current_pose", Pose, pose_callback)
     rospy.spin()
