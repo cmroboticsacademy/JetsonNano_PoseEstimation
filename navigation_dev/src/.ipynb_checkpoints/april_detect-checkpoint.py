@@ -83,6 +83,9 @@ def params_callback(msg):
     global K_params
     #K_params = [msg.K[0], msg.K[4], msg.K[2], msg.K[5]]
     #K_params = [msg.P[0], msg.P[5], msg.P[2], msg.P[6]]
+    # [ fx 0 Cx]
+    # [ 0 fy Cy]
+    # [ 0  0  1]
     K_params = [1615.8033976291508, 1604.188015052642, 901.2657921740209, 528.6492115797364] # Hardcoding this in from calibration
     
     #print("*********************** K_params is: *********************")

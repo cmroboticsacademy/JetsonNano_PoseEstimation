@@ -33,10 +33,10 @@ def pose_callback(msg):
     
 
     if target_id == tag_id and target_id != -1: 
-        x_left_bound = -0.13
-        x_right_bound = -0.065
+        x_left_bound = -0.065
+        x_right_bound = -0.13
         
-        if relative_x >= x_left_bound and relative_x <= x_right_bound:
+        if relative_x >= x_right_bound and relative_x <= x_left_bound:
             print("Centered")
             if relative_y > long_y_base-(target_row*long_y_inc):
                 print("Moving closer...")
@@ -47,7 +47,7 @@ def pose_callback(msg):
                 visited_tags.append(target_id) # Add this tag to the visited_tags list
                 target_id = -1 # Reset the target_id variable
         
-        elif relative_x > x_left_bound:
+        elif relative_x > x_right_bound:
             print("Adjusting to the left...")
             if turn_flag:
                 cmd_msg.data = [move, -speed*1.25, speed*1.25]
@@ -55,7 +55,7 @@ def pose_callback(msg):
                 cmd_msg.data = [stop, 0, 0]
             turn_flag = not turn_flag
             
-        elif relative_x < x_right_bound:
+        elif relative_x < x_left_bound:
             print("Adjusting to the right...")  
             if turn_flag:
                 cmd_msg.data = cmd_msg.data = [move, speed*1.25, -speed*1.25]
