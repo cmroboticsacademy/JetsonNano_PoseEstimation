@@ -24,7 +24,7 @@ def pose_callback(msg):
     
     print(relative_x, relative_y, tag_id)
     
-    print("tag_id: {}".format(tag_id))
+    #print("tag_id: {}".format(tag_id))
     
     if debugging == False:
         if tag_id == 1: 

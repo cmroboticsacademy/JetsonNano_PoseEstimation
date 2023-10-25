@@ -48,8 +48,8 @@ def process_tags(detector, K, s, results, image, visualize=True):
         poses_msg.detections.append(tm)
         poses_msg.ids.append(r.tag_id)
         
-        print("Tag ID is: ")
-        print(r.tag_id)
+        #print("Tag ID is: ")
+        #print(r.tag_id)
 
 
         #poses_msg.data.append(r.tag_id)
@@ -107,6 +107,8 @@ def cam_callback(msg):
     options = apriltag.DetectorOptions(families="tag36h11")
     detector = apriltag.Detector(options)
     results = detector.detect(img_gray_np)
+    
+    print results
 
     # [fx, fy, cx, cy]
     #K = [787.77467, 791.02202, 671.041, 319.57023] 

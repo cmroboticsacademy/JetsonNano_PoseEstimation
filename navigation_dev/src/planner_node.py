@@ -12,10 +12,10 @@ ctrl_pub = rospy.Publisher('/ctrl_cmd', Float32MultiArray, queue_size=2)
 
 
 def pose_callback(msg):
-    global target_id
+    global target_id, turn_flag
     move = 0.0
     stop = 1.0
-    speed = 0.15
+    speed = 0.20 
     
     # TODO: estimate control actions
     cmd_msg = Float32MultiArray()
@@ -49,17 +49,29 @@ def pose_callback(msg):
         
         elif relative_x > x_left_bound:
             print("Adjusting to the left...")
-            cmd_msg.data = [move, -speed*1.25, speed*1.25]
+            if turn_flag:
+                cmd_msg.data = [move, -speed*1.25, speed*1.25]
+            else:
+                cmd_msg.data = [stop, 0, 0]
+            turn_flag = not turn_flag
             
         elif relative_x < x_right_bound:
-            print("Adjusting to the right...")
-            cmd_msg.data = [move, speed*1.25, -speed*1.25]
+            print("Adjusting to the right...")  
+            if turn_flag:
+                cmd_msg.data = cmd_msg.data = [move, speed*1.25, -speed*1.25]
+            else:
+                cmd_msg.data = [stop, 0, 0]
+            turn_flag = not turn_flag
+            
     elif sorted(tags_array) == sorted(visited_tags):
         cmd_msg.data = [stop, 0, 0]
         print("All done")
     else:
-        cmd_msg.data = [move, speed, -speed]
-        ctrl_pub.publish(cmd_msg)
+        if turn_flag:
+            cmd_msg.data = [move, speed*1.25, 0]
+        else:
+            cmd_msg.data = [stop, 0, 0]
+        turn_flag = not turn_flag
     
     ctrl_pub.publish(cmd_msg)
     print("Visited tags: {}".format(visited_tags))
