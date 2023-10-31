@@ -20,9 +20,10 @@ def pose_callback(msg):
     # TODO: estimate control actions
     cmd_msg = Float32MultiArray()
     pose_mat = np.array(msg.pose.matrix)
+    axis_angle = msg.pose.axis_angle
     relative_x, relative_y, tag_id = pose_mat[0], pose_mat[1], pose_mat[2]
     
-    print(relative_x, relative_y, tag_id)
+    print(relative_x, relative_y, axis_angle, tag_id)
     
     #print("tag_id: {}".format(tag_id))
     

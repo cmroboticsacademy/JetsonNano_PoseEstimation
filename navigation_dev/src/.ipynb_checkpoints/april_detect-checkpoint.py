@@ -86,7 +86,8 @@ def params_callback(msg):
     # [ fx 0 Cx]
     # [ 0 fy Cy]
     # [ 0  0  1]
-    K_params = [1615.8033976291508, 1604.188015052642, 901.2657921740209, 528.6492115797364] # Hardcoding this in from calibration
+    #K_params = [19923.763133, 5088.529499, 945.106930, 546.236026] # Hardcoding this in from calibration
+    K_params = [1615.8033976291508, 1604.188015052642, 901.2657921740209, 528.6492115797364]
     
     #print("*********************** K_params is: *********************")
     #print(K_params)
@@ -108,7 +109,7 @@ def cam_callback(msg):
     detector = apriltag.Detector(options)
     results = detector.detect(img_gray_np)
     
-    print results
+    #print results
 
     # [fx, fy, cx, cy]
     #K = [787.77467, 791.02202, 671.041, 319.57023] 

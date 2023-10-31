@@ -15,7 +15,7 @@ def pose_callback(msg):
     global target_id, turn_flag
     move = 0.0
     stop = 1.0
-    speed = 0.20 
+    speed = 0.3 
     
     # TODO: estimate control actions
     cmd_msg = Float32MultiArray()
